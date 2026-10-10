@@ -1,0 +1,2 @@
+# Runtime uses Python standard-library modules only (including tkinter and sqlite3).
+# Tests use unittest and do not require third-party packages.
