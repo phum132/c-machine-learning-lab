@@ -4,7 +4,7 @@
 
 ## สถานะโครงการ
 
-Phase A–H implementation และ local checks เสร็จแล้ว; Phase I รวมเอกสารและตัวอย่างที่ตรวจซ้ำได้ CI workflow ถูกตั้งค่าไว้ แต่ยังไม่ได้ยืนยันผลจาก hosted GitHub Actions ใน workspace นี้ โปรดดู [roadmap](docs/implementation-roadmap.md) และ [handoff Phase H](docs/phase-h-handoff.md) สำหรับผลจริงและข้อจำกัด
+Phase A–I เสร็จแล้ว. Fresh GitHub clone ผ่าน Windows build/test และ GitHub Actions CI ผ่านบน commit ล่าสุด โปรดดู [roadmap](docs/implementation-roadmap.md), [handoff Phase H](docs/phase-h-handoff.md) และ [handoff Phase I](docs/phase-i-handoff.md) สำหรับผลจริงและข้อจำกัด
 
 ## Prerequisites
 
@@ -78,7 +78,7 @@ Phase H handoff บันทึกผลที่รันจริง. Benchmar
 - Logistic CLI ยังไม่เปิด metrics/batch evaluation
 - Model writer ยังไม่เขียนไฟล์แบบ atomic; serialization ต้องใช้ C numeric locale
 - GCC MSYS2 ที่ใช้ในเครื่อง Windows นี้ไม่มี sanitizer runtime; ASan/UBSan ผ่านด้วย MSYS2 Clang แทน
-- CI workflow ยังต้องตรวจผลจาก hosted GitHub Actions
+- CI run ที่ยืนยันล่าสุดเป็นผลของ commit `616b959`; รันใหม่เมื่อมี commit ถัดไป
 
 ## Project documents
 

@@ -66,7 +66,7 @@
 
 **เกณฑ์รับ:** CI build/test ผ่านบน runner ที่กำหนด; sanitizer/static analyzer ระบุ availability และผลจริง; benchmark methodology/input/settings บันทึกและมีผลวัดจริง; ข้อจำกัดเปิดเผย
 
-**สถานะ:** local quality checks และ reproducible benchmark เสร็จ. `build.bat test` และ forced Windows Make test ผ่าน; GCC `-fanalyzer` ผ่านโดยไม่มี `-Wanalyzer-*` findings หลังแก้ test double-close และเพิ่ม overflow guard. Benchmark methodology/ผลวัดจริงอยู่ใน [benchmark-phase-h](benchmark-phase-h.md). MSYS2 GCC ไม่มี sanitizer runtime สำหรับ Windows; หลังติดตั้ง MSYS2 Clang พร้อม compiler-rt แล้ว `build.bat test` ด้วย ASan/UBSan ผ่าน. CI sanitizer job ตั้งไว้สำหรับ Ubuntu 24.04 แต่ยังไม่มี hosted workflow result จาก workspace นี้. รายละเอียดและคำสั่งอยู่ใน [Phase H handoff](phase-h-handoff.md).
+**สถานะ:** local quality checks, reproducible benchmark, local Clang ASan/UBSan และ hosted CI เสร็จ/ผ่าน. `build.bat test` และ forced Windows Make test ผ่าน; GCC `-fanalyzer` ผ่านโดยไม่มี `-Wanalyzer-*` findings หลังแก้ test double-close และเพิ่ม overflow guard. GitHub Actions run [38022806001](https://github.com/phum132/repo132/actions/runs/38022806001) ผ่านบน commit `616b959`. Benchmark methodology/ผลวัดจริงอยู่ใน [benchmark-phase-h](benchmark-phase-h.md). รายละเอียดและคำสั่ง sanitizer อยู่ใน [Phase H handoff](phase-h-handoff.md).
 
 ## Phase I — Portfolio
 
@@ -74,4 +74,4 @@
 
 **เกณฑ์รับ:** setup ทำซ้ำได้จาก clean checkout; docs/commands/features ตรง implementation; test และ benchmark claims มีหลักฐาน; CI ผ่านจริง; ไม่มี secret หรือ generated artifact ที่ไม่ตั้งใจ
 
-**สถานะ:** กำลังทำ. ปรับ README/architecture และเพิ่ม CSV ตัวอย่าง; สำเนา source-only ที่ไม่มี `build/` ผ่าน Windows build/test และ CLI train/predict. Benchmark อ้างอิงรายงาน Phase H. CI configuration มีอยู่ แต่ยังยืนยัน hosted run ไม่ได้; workspace ไม่มี Git metadata จึงตรวจ actual clean checkout และสถานะ tracked artifacts ไม่ได้. ดู [Phase I handoff](phase-i-handoff.md) สำหรับรายการตรวจที่เหลือ.
+**สถานะ:** เสร็จ. README/architecture และ CSV examples ตรง implementation; fresh clone ของ commit `616b959` ผ่าน `build.bat test` และตัวอย่าง CLI; GitHub Actions run [38022806001](https://github.com/phum132/repo132/actions/runs/38022806001) ผ่าน. ตรวจ staged source ก่อน initial commit ไม่พบ key/token และ `build/` ถูก ignore. ดู [Phase I handoff](phase-i-handoff.md) สำหรับหลักฐานและข้อจำกัดที่เหลือ.

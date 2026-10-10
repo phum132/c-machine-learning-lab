@@ -24,10 +24,10 @@
   .\build.bat test
   ```
 
-  CI also runs sanitizer targets on Ubuntu 24.04; a hosted GitHub Actions run was not available from this workspace.
+  The hosted GitHub Actions run [38022806001](https://github.com/phum132/repo132/actions/runs/38022806001) passed on Ubuntu 24.04, including the test, analyzer, and sanitizer steps.
 
 ## Remaining limits
 
-- Sanitizer execution is confirmed locally with MSYS2 Clang; confirmation on the configured hosted Ubuntu runner remains open.
+- Sanitizer execution is confirmed locally with MSYS2 Clang and in the hosted Ubuntu 24.04 CI run.
 - Existing `isfinite` macro conversion diagnostics remain unsuppressed.
 - Benchmark numbers are a local end-to-end sample, not a cross-version performance claim.
