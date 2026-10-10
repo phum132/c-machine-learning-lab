@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-infrastructure:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d
+        with:
+          python-version: "3.12"
+      - name: Validate repository infrastructure
+        run: python scripts/validate_infrastructure.py
+      - name: Build and run tests
+        run: make test
+      - name: Static analysis
+        run: make test-analyzer
+      - name: Address and undefined behavior sanitizers
+        run: make test-sanitize
+
+# CI compilation is exercised by make test. Local CI execution still requires a
+# C11 compiler and Make; the runner image supplies both.
