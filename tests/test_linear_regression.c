@@ -13,7 +13,7 @@ int test_linear_regression(void)
     MLLinearSplit first = {0}, second = {0};
     const double targets[] = {1.0, 3.0, 5.0, 7.0};
     const double input[] = {0.0, 1.0, 2.0, 3.0};
-    const MLLinearRegressionConfig config = {2000U, 20U, 0.03, 1e-12};
+    const MLLinearRegressionConfig config = {2000U, 20U, 0.03, 1e-12, 0.0};
     double mse = 0.0;
 
     if (matrix_create(4U, 1U, &features) != ML_STATUS_OK ||
@@ -38,7 +38,7 @@ int test_linear_regression(void)
     /* One full-batch step has a hand-computable MSE gradient. */
     {
         const double step_targets[] = {3.0, 5.0};
-        const MLLinearRegressionConfig one_step = {1U, 1U, 0.1, 0.0};
+        const MLLinearRegressionConfig one_step = {1U, 1U, 0.1, 0.0, 0.0};
         MLLinearRegression *step_model = NULL;
         MLTrainingHistory step_history = {0U, NULL};
         MLMatrix *step_features = NULL;
@@ -68,7 +68,7 @@ int test_linear_regression(void)
 
     /* Invalid training parameters leave the model unchanged and clear history. */
     {
-        const MLLinearRegressionConfig invalid = {0U, 1U, 0.01, 0.0};
+        const MLLinearRegressionConfig invalid = {0U, 1U, 0.01, 0.0, 0.0};
         MLTrainingHistory invalid_history = {0U, NULL};
         if (ml_linear_regression_train(model, features, targets, 4U, &invalid,
                                        &invalid_history) != ML_STATUS_INVALID_ARGUMENT ||
@@ -81,7 +81,7 @@ int test_linear_regression(void)
         MLLinearRegression *rollback_model = NULL;
         MLTrainingHistory rollback_history = {0U, NULL};
         const double one_target[] = {1.0};
-        const MLLinearRegressionConfig divergent = {2U, 1U, DBL_MAX, 0.0};
+        const MLLinearRegressionConfig divergent = {2U, 1U, DBL_MAX, 0.0, 0.0};
         MLMatrix *one_row = NULL;
         if (matrix_create(1U, 1U, &one_row) != ML_STATUS_OK ||
             ml_linear_regression_create(1U, &rollback_model) != ML_STATUS_OK) {

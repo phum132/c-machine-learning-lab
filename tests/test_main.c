@@ -10,6 +10,8 @@ int test_classification_metrics(void);
 int test_model_serialization(void);
 int test_feature_scaling(void);
 int test_regression_metrics(void);
+int test_cross_validation(void);
+int test_regularization(void);
 
 int main(void)
 {
@@ -83,6 +85,20 @@ int main(void)
         failed = 1;
     } else {
         (void)fprintf(stdout, "PASS: regression_metrics tests\n");
+    }
+
+    if (test_cross_validation() != 0) {
+        (void)fprintf(stderr, "FAIL: cross_validation tests\n");
+        failed = 1;
+    } else {
+        (void)fprintf(stdout, "PASS: cross_validation tests\n");
+    }
+
+    if (test_regularization() != 0) {
+        (void)fprintf(stderr, "FAIL: regularization tests\n");
+        failed = 1;
+    } else {
+        (void)fprintf(stdout, "PASS: regularization tests\n");
     }
 
     return failed;

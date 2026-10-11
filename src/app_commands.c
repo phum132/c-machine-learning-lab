@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "classification_metrics.h"
+#include "cross_validation.h"
 #include "dataset.h"
 #include "feature_scaling.h"
 #include "model_serialization.h"
@@ -20,6 +21,8 @@
 #define CLI_MAX_TRAIN_CELL_UPDATES 250000000U
 #define CLI_DEFAULT_SEED 42U
 #define CLI_DEFAULT_THRESHOLD 0.5
+#define CLI_DEFAULT_FOLDS 5U
+#define CLI_MAX_FOLDS 20U
 
 typedef struct {
     const char *type;
@@ -44,6 +47,10 @@ typedef struct {
     int has_validation;
     int has_seed;
     int normalize;
+    double l2;
+    int has_l2;
+    size_t folds;
+    int has_folds;
 } TrainOptions;
 
 /* Exactly one of linear/logistic is non-NULL once loaded or trained. The
@@ -156,7 +163,9 @@ static int parse_finite_double(const char *text, double *out)
     return 1;
 }
 
-static int parse_train_options(int argc, char *const argv[], TrainOptions *options)
+/* `cv_mode` parses cross-validate options: --folds instead of --model and
+ * --validation-split, and --seed without a validation split. */
+static int parse_train_options(int argc, char *const argv[], TrainOptions *options, int cv_mode)
 {
     memset(options, 0, sizeof(*options));
     options->iterations = 1000U;
@@ -164,6 +173,7 @@ static int parse_train_options(int argc, char *const argv[], TrainOptions *optio
     options->learning_rate = 0.01;
     options->tolerance = 1e-8;
     options->seed = CLI_DEFAULT_SEED;
+    options->folds = CLI_DEFAULT_FOLDS;
     for (int i = 2; i < argc; ++i) {
         const char *key = argv[i];
         const char *value = NULL;
@@ -192,7 +202,7 @@ static int parse_train_options(int argc, char *const argv[], TrainOptions *optio
             if (options->has_target || !parse_size(value, &options->target)) return 0;
             options->has_target = 1;
         } else if (strcmp(key, "--model") == 0) {
-            if (options->has_model || value[0] == '\0') return 0;
+            if (cv_mode || options->has_model || value[0] == '\0') return 0;
             options->has_model = 1; options->model_path = value;
         } else if (strcmp(key, "--iterations") == 0) {
             if (options->has_iterations || !parse_size(value, &parsed_size) ||
@@ -208,14 +218,22 @@ static int parse_train_options(int argc, char *const argv[], TrainOptions *optio
             if (options->has_tolerance || !parse_finite_double(value, &parsed_double) || parsed_double < 0.0) return 0;
             options->has_tolerance = 1; options->tolerance = parsed_double;
         } else if (strcmp(key, "--validation-split") == 0) {
-            if (options->has_validation || !parse_finite_double(value, &parsed_double) ||
+            if (cv_mode || options->has_validation || !parse_finite_double(value, &parsed_double) ||
                 parsed_double <= 0.0 || parsed_double >= 1.0) return 0;
             options->has_validation = 1; options->validation_fraction = parsed_double;
         } else if (strcmp(key, "--seed") == 0) {
             if (options->has_seed || !parse_size(value, &parsed_size)) return 0;
             options->has_seed = 1; options->seed = (uint64_t)parsed_size;
+        } else if (strcmp(key, "--l2") == 0) {
+            if (options->has_l2 || !parse_finite_double(value, &parsed_double) || parsed_double < 0.0) return 0;
+            options->has_l2 = 1; options->l2 = parsed_double;
+        } else if (strcmp(key, "--folds") == 0) {
+            if (!cv_mode || options->has_folds || !parse_size(value, &parsed_size) ||
+                parsed_size < 2U || parsed_size > CLI_MAX_FOLDS) return 0;
+            options->has_folds = 1; options->folds = parsed_size;
         } else return 0;
     }
+    if (cv_mode) return options->has_type && options->has_data && options->has_target;
     if (options->has_seed && !options->has_validation) return 0;
     return options->has_type && options->has_data && options->has_target && options->has_model;
 }
@@ -238,7 +256,7 @@ static int train_command(int argc, char *const argv[], FILE *out, FILE *err)
     CliModel model = {NULL, NULL, {0U, NULL, NULL}};
     const char *operation = "preparing training data";
     MLStatus status;
-    if (!parse_train_options(argc, argv, &options)) {
+    if (!parse_train_options(argc, argv, &options, 0)) {
         (void)fprintf(err, "Error: invalid or missing train option\n");
         return 2;
     }
@@ -283,7 +301,7 @@ static int train_command(int argc, char *const argv[], FILE *out, FILE *err)
     }
     if (status == ML_STATUS_OK && strcmp(options.type, "linear") == 0) {
         MLLinearRegressionConfig config = {options.iterations, options.patience,
-                                           options.learning_rate, options.tolerance};
+                                           options.learning_rate, options.tolerance, options.l2};
         MLTrainingHistory history = {0U, NULL};
         operation = "training/saving model";
         status = ml_linear_regression_create(ml_dataset_feature_count(dataset), &model.linear);
@@ -295,7 +313,7 @@ static int train_command(int argc, char *const argv[], FILE *out, FILE *err)
         ml_training_history_destroy(&history);
     } else if (status == ML_STATUS_OK) {
         MLLogisticRegressionConfig config = {options.iterations, options.patience,
-                                             options.learning_rate, options.tolerance};
+                                             options.learning_rate, options.tolerance, options.l2};
         MLLogisticHistory history = {0U, NULL};
         operation = "training/saving model";
         status = ml_logistic_regression_create(ml_dataset_feature_count(dataset), &model.logistic);
@@ -566,12 +584,184 @@ invalid:
     return 2;
 }
 
+/* Train a fresh model of options->type on the given rows (features already scaled). */
+static MLStatus fit_model(const TrainOptions *options, const MLMatrix *features, const double *targets,
+                          size_t count, CliModel *model)
+{
+    MLStatus status;
+    if (strcmp(options->type, "linear") == 0) {
+        MLLinearRegressionConfig config = {options->iterations, options->patience,
+                                           options->learning_rate, options->tolerance, options->l2};
+        status = ml_linear_regression_create(matrix_cols(features), &model->linear);
+        if (status == ML_STATUS_OK)
+            status = ml_linear_regression_train(model->linear, features, targets, count, &config, NULL);
+    } else {
+        MLLogisticRegressionConfig config = {options->iterations, options->patience,
+                                             options->learning_rate, options->tolerance, options->l2};
+        status = ml_logistic_regression_create(matrix_cols(features), &model->logistic);
+        if (status == ML_STATUS_OK)
+            status = ml_logistic_regression_train(model->logistic, features, targets, count, &config, NULL);
+    }
+    return status;
+}
+
+/* Up to four scores for one fold: MAE, RMSE, R2 (linear) or accuracy, precision, recall, F1. */
+static MLStatus fold_scores(const CliModel *model, const MLMatrix *features, const double *targets,
+                            double scores[4], int *has_r2)
+{
+    MLMatrix *predictions = NULL;
+    MLStatus status;
+    const size_t rows = matrix_rows(features);
+    if (model->linear != NULL) {
+        MLRegressionMetrics m;
+        status = ml_linear_regression_predict(model->linear, features, &predictions);
+        if (status == ML_STATUS_OK)
+            status = ml_regression_metrics(targets, matrix_const_data(predictions), rows, &m);
+        if (status == ML_STATUS_OK) {
+            scores[0] = m.mae; scores[1] = m.rmse; scores[2] = m.r2; scores[3] = 0.0; *has_r2 = m.has_r2;
+        }
+    } else {
+        MLBinaryClassificationMetrics m;
+        status = ml_logistic_regression_predict_classes(model->logistic, features, CLI_DEFAULT_THRESHOLD,
+                                                        &predictions);
+        if (status == ML_STATUS_OK)
+            status = ml_binary_classification_metrics(targets, matrix_const_data(predictions), rows, &m);
+        if (status == ML_STATUS_OK) {
+            scores[0] = m.accuracy; scores[1] = m.precision; scores[2] = m.recall; scores[3] = m.f1;
+            *has_r2 = 1;
+        }
+    }
+    matrix_destroy(predictions);
+    return status;
+}
+
+/* Copy the rows whose fold matches (or does not match) `fold` into new arrays. */
+static MLStatus take_rows(const MLDataset *dataset, const size_t *fold_of_row, size_t fold, int in_fold,
+                          MLMatrix **features, double **targets, size_t *count)
+{
+    const size_t n = ml_dataset_sample_count(dataset), d = ml_dataset_feature_count(dataset);
+    const double *x = matrix_const_data(ml_dataset_features(dataset)), *y = ml_dataset_targets(dataset);
+    size_t rows = 0U, at = 0U;
+    MLStatus status;
+    for (size_t i = 0U; i < n; ++i) rows += (fold_of_row[i] == fold) == (in_fold != 0);
+    *features = NULL; *targets = NULL; *count = rows;
+    if (rows == 0U) return ML_STATUS_INVALID_ARGUMENT;
+    status = matrix_create(rows, d, features);
+    if (status != ML_STATUS_OK) return status;
+    *targets = malloc(rows * sizeof(**targets));
+    if (*targets == NULL) { matrix_destroy(*features); *features = NULL; return ML_STATUS_OUT_OF_MEMORY; }
+    for (size_t i = 0U; i < n; ++i) {
+        if ((fold_of_row[i] == fold) != (in_fold != 0)) continue;
+        memcpy(matrix_data(*features) + at * d, x + i * d, d * sizeof(double));
+        (*targets)[at++] = y[i];
+    }
+    return ML_STATUS_OK;
+}
+
+static int cross_validate_command(int argc, char *const argv[], FILE *out, FILE *err)
+{
+    TrainOptions options;
+    MLDatasetCsvOptions csv_options;
+    MLDataset *dataset = NULL;
+    size_t *fold_of_row = NULL;
+    double sums[4] = {0.0, 0.0, 0.0, 0.0}, squares[4] = {0.0, 0.0, 0.0, 0.0};
+    size_t r2_folds = 0U;
+    MLStatus status;
+    if (!parse_train_options(argc, argv, &options, 1)) {
+        (void)fprintf(err, "Error: invalid or missing cross-validate option\n");
+        return 2;
+    }
+    csv_options.has_header = options.has_header;
+    csv_options.target_column = options.target;
+    status = ml_dataset_load_csv(options.data_path, &csv_options, &dataset);
+    if (status != ML_STATUS_OK) return report_status(err, "loading CSV", status);
+    {
+        const size_t n = ml_dataset_sample_count(dataset);
+        const size_t cells = n * ml_dataset_feature_count(dataset);
+        if (options.folds > n) {
+            ml_dataset_destroy(dataset);
+            (void)fprintf(err, "Error: --folds is larger than the number of rows\n");
+            return 2;
+        }
+        if (cells == 0U || options.iterations > CLI_MAX_TRAIN_CELL_UPDATES / cells / options.folds) {
+            ml_dataset_destroy(dataset);
+            (void)fprintf(err, "Error: cross-validation workload exceeds the CLI safety limit\n");
+            return 2;
+        }
+        fold_of_row = malloc(n * sizeof(*fold_of_row));
+        if (fold_of_row == NULL) { ml_dataset_destroy(dataset); return report_status(err, "cross-validate", ML_STATUS_OUT_OF_MEMORY); }
+        status = ml_kfold_assign(n, options.folds, options.seed, fold_of_row);
+    }
+    const int is_linear = strcmp(options.type, "linear") == 0;
+    for (size_t fold = 0U; status == ML_STATUS_OK && fold < options.folds; ++fold) {
+        MLMatrix *train_x = NULL, *test_x = NULL;
+        double *train_y = NULL, *test_y = NULL;
+        size_t train_n = 0U, test_n = 0U;
+        CliModel model = {NULL, NULL, {0U, NULL, NULL}};
+        double scores[4];
+        int has_r2 = 0;
+        status = take_rows(dataset, fold_of_row, fold, 0, &train_x, &train_y, &train_n);
+        if (status == ML_STATUS_OK) status = take_rows(dataset, fold_of_row, fold, 1, &test_x, &test_y, &test_n);
+        if (status == ML_STATUS_OK && options.normalize) {
+            /* Scaling is fitted on this fold's training rows only, so the held-out fold stays unseen. */
+            status = ml_feature_scaling_fit(train_x, &model.scaling);
+            if (status == ML_STATUS_OK) status = ml_feature_scaling_apply(&model.scaling, train_x);
+            if (status == ML_STATUS_OK) status = ml_feature_scaling_apply(&model.scaling, test_x);
+        }
+        if (status == ML_STATUS_OK) status = fit_model(&options, train_x, train_y, train_n, &model);
+        if (status == ML_STATUS_OK) status = fold_scores(&model, test_x, test_y, scores, &has_r2);
+        if (status == ML_STATUS_OK) {
+            if (is_linear) {
+                (void)fprintf(out, "Fold %zu: rows=%zu MAE=%.6g RMSE=%.6g R2=", fold + 1U, test_n, scores[0], scores[1]);
+                if (has_r2) (void)fprintf(out, "%.6g\n", scores[2]);
+                else (void)fprintf(out, "n/a\n");
+            } else {
+                (void)fprintf(out, "Fold %zu: rows=%zu accuracy=%.6g precision=%.6g recall=%.6g F1=%.6g\n",
+                              fold + 1U, test_n, scores[0], scores[1], scores[2], scores[3]);
+            }
+            for (size_t k = 0U; k < 4U; ++k) {
+                if (is_linear && k == 2U && !has_r2) continue;
+                sums[k] += scores[k];
+                squares[k] += scores[k] * scores[k];
+            }
+            r2_folds += (size_t)has_r2;
+        }
+        cli_model_destroy(&model);
+        matrix_destroy(train_x); matrix_destroy(test_x); free(train_y); free(test_y);
+    }
+    free(fold_of_row);
+    ml_dataset_destroy(dataset);
+    if (status != ML_STATUS_OK) return report_status(err, "cross-validating", status);
+    {
+        const double k = (double)options.folds;
+        double mean[4], sd[4];
+        for (size_t i = 0U; i < 4U; ++i) {
+            const double count = (is_linear && i == 2U) ? (double)r2_folds : k;
+            mean[i] = count > 0.0 ? sums[i] / count : 0.0;
+            const double var = count > 1.0 ? (squares[i] - count * mean[i] * mean[i]) / (count - 1.0) : 0.0;
+            sd[i] = var > 0.0 ? sqrt(var) : 0.0;
+        }
+        if (is_linear) {
+            (void)fprintf(out, "Mean over %zu folds: MAE=%.6g+/-%.3g RMSE=%.6g+/-%.3g R2=", options.folds,
+                          mean[0], sd[0], mean[1], sd[1]);
+            if (r2_folds > 0U) (void)fprintf(out, "%.6g+/-%.3g\n", mean[2], sd[2]);
+            else (void)fprintf(out, "n/a\n");
+        } else {
+            (void)fprintf(out, "Mean over %zu folds: accuracy=%.6g+/-%.3g precision=%.6g+/-%.3g recall=%.6g+/-%.3g "
+                          "F1=%.6g+/-%.3g\n", options.folds, mean[0], sd[0], mean[1], sd[1], mean[2], sd[2],
+                          mean[3], sd[3]);
+        }
+    }
+    return ferror(out) ? 1 : 0;
+}
+
 int app_commands_run(int argc, char *const argv[], FILE *out, FILE *err)
 {
     if (argc < 2 || argv == NULL || argv[1] == NULL) return 2;
     if (strcmp(argv[1], "train") == 0) return train_command(argc, argv, out, err);
     if (strcmp(argv[1], "predict") == 0) return predict_command(argc, argv, out, err);
     if (strcmp(argv[1], "evaluate") == 0) return evaluate_command(argc, argv, out, err);
+    if (strcmp(argv[1], "cross-validate") == 0) return cross_validate_command(argc, argv, out, err);
     (void)fprintf(err, "Error: unknown argument: %s\n", argv[1]);
     return 2;
 }

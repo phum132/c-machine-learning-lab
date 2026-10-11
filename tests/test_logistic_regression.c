@@ -14,7 +14,7 @@ int test_logistic_regression(void)
     const double feature_values[] = {-2.0, -1.0, 1.0, 2.0};
     const double labels[] = {0.0, 0.0, 1.0, 1.0};
     const double invalid_labels[] = {0.0, 0.5, 1.0, 1.0};
-    const MLLogisticRegressionConfig config = {3000U, 20U, 0.1, 1e-12};
+    const MLLogisticRegressionConfig config = {3000U, 20U, 0.1, 1e-12, 0.0};
     MLMatrix *features = NULL;
     MLMatrix *probabilities = NULL;
     MLMatrix *classes = NULL;
@@ -54,7 +54,7 @@ int test_logistic_regression(void)
     {
         const double step_x[] = {-1.0, 1.0};
         const double step_y[] = {0.0, 1.0};
-        const MLLogisticRegressionConfig one_step = {1U, 1U, 0.2, 0.0};
+        const MLLogisticRegressionConfig one_step = {1U, 1U, 0.2, 0.0, 0.0};
         MLMatrix *step_features = NULL;
         MLLogisticRegression *step_model = NULL;
         MLLogisticHistory step_history = {0U, NULL};
@@ -128,7 +128,7 @@ int test_logistic_regression(void)
     /* A failed non-finite update rolls all parameters back. */
     {
         const double one_label[] = {1.0};
-        const MLLogisticRegressionConfig divergent = {2U, 1U, DBL_MAX, 0.0};
+        const MLLogisticRegressionConfig divergent = {2U, 1U, DBL_MAX, 0.0, 0.0};
         MLMatrix *one_row = NULL;
         MLLogisticRegression *rollback_model = NULL;
         MLLogisticHistory rollback_history = {0U, NULL};
@@ -158,7 +158,7 @@ int test_logistic_regression(void)
     /* Cross-entropy remains finite when training creates very large logits. */
     {
         const double conflicting_labels[] = {1.0, 0.0};
-        const MLLogisticRegressionConfig extreme_config = {1U, 1U, 1000000.0, 0.0};
+        const MLLogisticRegressionConfig extreme_config = {1U, 1U, 1000000.0, 0.0, 0.0};
         MLMatrix *extreme_features = NULL;
         MLLogisticRegression *extreme_model = NULL;
         MLLogisticHistory extreme_history = {0U, NULL};

@@ -14,6 +14,9 @@ typedef struct {
     size_t patience;
     double learning_rate;
     double tolerance;
+    /* L2 penalty strength, >= 0. The trained loss (and its history) is
+     * cross-entropy + l2 * sum(weights^2); the bias is not penalized. */
+    double l2;
 } MLLogisticRegressionConfig;
 
 typedef struct {

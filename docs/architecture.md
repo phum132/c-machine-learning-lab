@@ -14,6 +14,7 @@ This document describes the implementation in the repository today. The public C
 | `logistic_regression` | Binary model, stable sigmoid/cross-entropy, prediction and training history | `matrix`, `ml_error` |
 | `classification_metrics` | Binary confusion counts, accuracy, precision, recall, and F1 | `ml_error` |
 | `regression_metrics` | MAE, RMSE, and R² | `ml_error` |
+| `cross_validation` | Seeded k-fold row assignment | `ml_error` |
 | `feature_scaling` | Fit and apply per-feature mean/std standardization | `matrix`, `ml_error` |
 | `model_serialization` | Versioned ASCII save/load for linear and logistic models, with optional scaling and replace-on-success writes | model APIs, `feature_scaling` |
 | `app_cli`, `app_commands` | Argument parsing and `train`/`predict`/`evaluate` workflows | dataset, models, scaling, metrics, serialization |

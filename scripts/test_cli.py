@@ -209,6 +209,63 @@ def main() -> int:
             return 1
         print("PASS CLI split/evaluate argument and data errors")
 
+        cv = run(
+            executable, "cross-validate", "--type", "linear", "--data", str(scaled_train), "--target", "1",
+            "--header", "--folds", "4", "--seed", "3", "--normalize", "--iterations", "3000",
+            "--learning-rate", "0.1",
+        )
+        fold_lines = [line for line in cv.stdout.splitlines() if line.startswith("Fold ")]
+        try:
+            mean_r2 = float(cv.stdout.split("R2=")[-1].split("+/-")[0])
+        except (ValueError, IndexError):
+            mean_r2 = float("nan")
+        cv_again = run(
+            executable, "cross-validate", "--type", "linear", "--data", str(scaled_train), "--target", "1",
+            "--header", "--folds", "4", "--seed", "3", "--normalize", "--iterations", "3000",
+            "--learning-rate", "0.1",
+        )
+        cv_logistic = run(
+            executable, "cross-validate", "--type", "logistic", "--data", str(logistic_train), "--target", "1",
+            "--header", "--folds", "2", "--iterations", "1200", "--learning-rate", "0.1",
+        )
+        if (cv.returncode != 0 or len(fold_lines) != 4 or "Mean over 4 folds" not in cv.stdout or
+                not mean_r2 > 0.999 or cv_again.stdout != cv.stdout or cv_logistic.returncode != 0 or
+                "accuracy=" not in cv_logistic.stdout):
+            print(f"FAIL CLI cross-validate: {cv.stdout!r} {cv.stderr!r} {cv_logistic.stderr!r}", file=sys.stderr)
+            return 1
+        print("PASS CLI cross-validate (deterministic folds, per-fold scaling)")
+
+        ridge_model = directory / "ridge.model"
+        ridge = run(
+            executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1", "--header",
+            "--model", str(ridge_model), "--iterations", "20000", "--learning-rate", "0.05",
+            "--tolerance", "1e-15", "--l2", "1",
+        )
+        ridge_pred = run(executable, "predict", "--model", str(ridge_model), "--input", str(predict_csv))
+        try:
+            ridge_value = float(ridge_pred.stdout.split()[0])
+        except (ValueError, IndexError):
+            ridge_value = float("nan")
+        # x = 0,1,2 and y = 2x+1 with l2 = 1: w = cov/(var+l2) = (4/3)/(2/3+1) = 0.8, b = 3 - 0.8 = 2.2.
+        bad_cv = [
+            run(executable, "cross-validate", "--type", "linear", "--data", str(train_csv), "--target", "1",
+                "--header", "--folds", "1"),
+            run(executable, "cross-validate", "--type", "linear", "--data", str(train_csv), "--target", "1",
+                "--header", "--model", str(ridge_model)),
+            run(executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1",
+                "--header", "--model", str(ridge_model), "--l2", "-1"),
+            run(executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1",
+                "--header", "--model", str(ridge_model), "--folds", "3"),
+        ]
+        too_many_folds = run(executable, "cross-validate", "--type", "linear", "--data", str(train_csv),
+                             "--target", "1", "--header", "--folds", "4")
+        if (ridge.returncode != 0 or abs(ridge_value - (0.8 * 3 + 2.2)) > 1e-3 or
+                any(r.returncode != 2 for r in bad_cv) or too_many_folds.returncode != 2):
+            print(f"FAIL CLI l2/cv errors: {ridge_pred.stdout!r} {[r.returncode for r in bad_cv]} "
+                  f"{too_many_folds.returncode}", file=sys.stderr)
+            return 1
+        print("PASS CLI --l2 ridge value and cross-validate argument errors")
+
     return 0
 
 

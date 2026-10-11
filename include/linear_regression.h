@@ -17,6 +17,10 @@ typedef struct {
     size_t patience;
     double learning_rate;
     double tolerance;
+    /* L2 (ridge) penalty strength, >= 0. The trained loss is
+     * MSE + l2 * sum(weights^2); the bias is not penalized. Omitted in a
+     * positional initializer, it is 0 (no regularization). */
+    double l2;
 } MLLinearRegressionConfig;
 
 typedef struct {

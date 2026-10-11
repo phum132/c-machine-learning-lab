@@ -55,6 +55,15 @@ build.bat test
 - `--validation-split F` (`0 < F < 1`) สุ่มแยกแถวไว้เป็น validation ด้วย `--seed` (ค่าเริ่มต้น `42`) แล้วพิมพ์ metrics ทั้ง `Training:` และ `Validation:`. `--seed` ใช้ได้เฉพาะกับ `--validation-split`
 - `evaluate` อ่าน CSV ที่มี target แล้วพิมพ์ MAE/RMSE/R² สำหรับ linear (R² เป็น `n/a` เมื่อ target ค่าคงที่) หรือ accuracy/precision/recall/F1 และ confusion counts สำหรับ logistic (รับ `--threshold`)
 
+### L2 regularization และ k-fold cross-validation
+
+```bat
+.\build\cml-lab.exe cross-validate --type linear --data examples\linear-train.csv --target 1 --header --folds 5 --normalize --l2 0.01 --iterations 3000 --learning-rate 0.1
+```
+
+- `--l2 X` (ใช้ได้ทั้ง `train` และ `cross-validate`) ลงโทษน้ำหนักที่ใหญ่เกินไป เพื่อกันโมเดลจำข้อมูลฝึกแทนที่จะเรียนรูปแบบ (overfitting) loss ที่ฝึกคือ MSE หรือ cross-entropy บวก `X × ผลรวมน้ำหนักยกกำลังสอง` โดยไม่ลงโทษ bias ค่าเริ่มต้น 0 = ไม่ใช้
+- `cross-validate` แบ่งข้อมูลเป็น K ส่วน (`--folds`, ค่าเริ่มต้น 5, สูงสุด 20) ฝึกด้วย K−1 ส่วนแล้วทดสอบส่วนที่เหลือ วนจนครบทุกส่วน พิมพ์ผลแต่ละ fold และค่าเฉลี่ย ± ส่วนเบี่ยงเบนมาตรฐาน `--normalize` ปรับสเกลจากแถวฝึกของแต่ละ fold เท่านั้น `--seed` เปลี่ยนการสุ่มแบ่ง (ค่าเริ่มต้น 42) คำสั่งนี้ไม่บันทึกโมเดล ใช้เลือกค่า เช่น `--l2` หรือ `--learning-rate` ก่อนรัน `train` จริง
+
 Exit code: `0` สำเร็จ, `1` runtime/data/model error, `2` arguments ไม่ถูกต้อง. CSV parser ใช้ grammar แบบ strict และจำกัดขนาด input; รายละเอียดอยู่ใน [ADR-001](docs/adr-001-dataset-csv.md). Model format และ limits อยู่ใน [ADR-003](docs/adr-003-model-serialization.md).
 
 ## เดโมข้อมูลจริง
@@ -77,6 +86,7 @@ Exit code: `0` สำเร็จ, `1` runtime/data/model error, `2` arguments �
 - [Logistic regression](include/logistic_regression.h): binary labels, stable sigmoid/cross-entropy และ probability/class prediction
 - [Classification metrics](include/classification_metrics.h): accuracy, precision, recall, F1 และ confusion counts
 - [Regression metrics](include/regression_metrics.h): MAE, RMSE และ R²
+- [Cross-validation](include/cross_validation.h): แบ่งแถวเป็น K fold แบบสุ่มที่ทำซ้ำได้ด้วย seed
 - [Feature scaling](include/feature_scaling.h): fit/apply standardization แบบ mean/std
 - [Dataset](include/dataset.h): strict numeric CSV loader พร้อมเลือก target column
 - [Serialization](include/model_serialization.h): versioned ASCII model save/load (v1 parameters, v2 รวม scaling) เขียนผ่านไฟล์ชั่วคราวแล้วค่อยแทนที่
@@ -100,6 +110,7 @@ Phase H handoff บันทึกผลที่รันจริง. Benchmar
 
 ## Known limitations
 
+- การฝึกเป็น full-batch gradient descent (อ่านข้อมูลทั้งชุดรอบละครั้ง); เฟส K ทำให้เร็วขึ้น 2–3 เท่าโดยผลเหมือนเดิมทุกไบต์ แต่ยังไม่มี mini-batch
 - Validation split เป็นการสุ่มแบบครั้งเดียว ไม่ stratify label และยังไม่มี k-fold
 - Model writer แทนที่ไฟล์ด้วย rename/MoveFileEx แต่ไม่ fsync จึงไม่รับประกันข้อมูลเมื่อไฟดับ; ถ้าเซฟไฟล์เดียวกันพร้อมกัน ไฟล์ที่เขียนเสร็จทีหลังจะเป็นตัวที่เหลืออยู่; serialization ต้องใช้ C numeric locale
 - เดโมใน `examples/` และ `scripts/run_linear_csv.py` ยังปรับสเกลใน Python เอง ไม่ได้ใช้ `--normalize`

@@ -11,7 +11,8 @@ static void print_usage(FILE *out, const char *program_name)
 {
     (void)fprintf(out, "Usage:\n");
     (void)fprintf(out, "  %s [--help | --version]\n", program_name);
-    (void)fprintf(out, "  %s train --type linear|logistic --data CSV --target INDEX --model FILE [--header] [--iterations N] [--patience N] [--learning-rate X] [--tolerance X] [--normalize] [--validation-split FRACTION [--seed N]]\n", program_name);
+    (void)fprintf(out, "  %s train --type linear|logistic --data CSV --target INDEX --model FILE [--header] [--iterations N] [--patience N] [--learning-rate X] [--tolerance X] [--normalize] [--l2 X] [--validation-split FRACTION [--seed N]]\n", program_name);
+    (void)fprintf(out, "  %s cross-validate --type linear|logistic --data CSV --target INDEX [--folds K] [--seed N] [--header] [--normalize] [--l2 X] [--iterations N] [--patience N] [--learning-rate X] [--tolerance X]\n", program_name);
     (void)fprintf(out, "  %s predict --model FILE --input FEATURES.csv [--threshold X]\n", program_name);
     (void)fprintf(out, "  %s evaluate --model FILE --data CSV --target INDEX [--header] [--threshold X]\n", program_name);
     (void)fprintf(out, "  -h, --help     Show this help message\n");

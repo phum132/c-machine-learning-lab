@@ -83,3 +83,11 @@
 **เกณฑ์รับ:** สถิติ scaling คำนวณจาก train เท่านั้นและ round-trip ผ่าน model file; โมเดลเดิม (version 1) ยังโหลดได้; save ที่ล้มเหลวไม่ทำลายไฟล์เดิม; metrics มี known-value tests; CLI exit codes ตามสัญญาเดิม; build/test/sanitizer ผ่าน
 
 **สถานะ:** local acceptance checks ผ่าน ยังไม่ได้ยืนยัน hosted CI. Format version 2 และนโยบาย loader อยู่ใน [ADR-003](adr-003-model-serialization.md); ผลตรวจอยู่ใน [Phase J handoff](phase-j-handoff.md).
+
+## Phase K — เร็วและแม่นขึ้น
+
+**งาน:** ลดงานซ้ำในลูปฝึก, L2 regularization ใน linear/logistic, k-fold cross-validation ใน CLI
+
+**เกณฑ์รับ:** ผลการฝึกเหมือนเดิมเมื่อ `l2 = 0` (ค่าใน history และไฟล์โมเดล); L2 ตรงกับสูตรปิดของ ridge; fold ทำซ้ำได้ด้วย seed และขนาดต่างกันไม่เกิน 1; scaling ใน cross-validation ไม่รั่วจาก fold ที่ทดสอบ; build/test/analyzer/sanitizer ผ่าน
+
+**สถานะ:** local และ WSL Ubuntu ผ่านครบ ยังไม่ได้ยืนยัน hosted CI ดู [Phase K handoff](phase-k-handoff.md)

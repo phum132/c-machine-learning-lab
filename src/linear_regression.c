@@ -148,6 +148,7 @@ MLStatus ml_linear_regression_train(MLLinearRegression *model,
         config->max_iterations == 0U || config->patience == 0U ||
         !ml_is_finite(config->learning_rate) || config->learning_rate <= 0.0 ||
         !ml_is_finite(config->tolerance) || config->tolerance < 0.0 ||
+        !ml_is_finite(config->l2) || config->l2 < 0.0 ||
         config->max_iterations == SIZE_MAX || config->max_iterations + 1U > SIZE_MAX / sizeof(double))
         return ML_STATUS_INVALID_ARGUMENT;
 
@@ -160,41 +161,52 @@ MLStatus ml_linear_regression_train(MLLinearRegression *model,
     memcpy(weights_before, model->weights, model->feature_count * sizeof(*weights_before));
     double bias_before = model->bias;
     size_t history_length = 0U, stable_count = 0U;
-    double loss = 0.0;
-    MLStatus status = ml_linear_regression_mse(model, features, targets, target_count, &loss);
-    if (status != ML_STATUS_OK) goto rollback;
-    losses[history_length++] = loss;
+    MLStatus status = ML_STATUS_OK;
+    const double *x = matrix_const_data(features);
+    const size_t d = model->feature_count;
 
-    for (size_t iteration = 0U; iteration < config->max_iterations; ++iteration) {
-        memset(gradient, 0, model->feature_count * sizeof(*gradient));
-        double bias_gradient = 0.0;
+    /* Inputs were validated once above. Each pass computes the loss of the
+     * current parameters and, unless it is the final pass, the gradient, so
+     * every iteration reads the data exactly once. losses[k] is the loss after
+     * k updates, matching the documented history. */
+    for (size_t iteration = 0U;; ++iteration) {
+        const int final_pass = iteration == config->max_iterations;
+        double squared = 0.0, bias_gradient = 0.0, penalty = 0.0;
+        if (!final_pass) memset(gradient, 0, d * sizeof(*gradient));
         for (size_t row = 0U; row < target_count; ++row) {
-            double prediction = 0.0;
-            status = predict_value(model, matrix_const_data(features) + row * model->feature_count, &prediction);
-            if (status != ML_STATUS_OK) goto rollback;
-            double error = prediction - targets[row];
-            bias_gradient += error;
-            for (size_t col = 0U; col < model->feature_count; ++col)
-                gradient[col] += error * matrix_const_data(features)[row * model->feature_count + col];
+            const double *xr = x + row * d;
+            double prediction = model->bias;
+            for (size_t col = 0U; col < d; ++col) prediction += model->weights[col] * xr[col];
+            const double error = prediction - targets[row];
+            squared += error * error;
+            if (!final_pass) {
+                bias_gradient += error;
+                for (size_t col = 0U; col < d; ++col) gradient[col] += error * xr[col];
+            }
         }
-        double factor = 2.0 / (double)target_count;
+        for (size_t col = 0U; col < d; ++col) penalty += model->weights[col] * model->weights[col];
+        const double loss = squared / (double)target_count + config->l2 * penalty;
+        /* Overflow anywhere in the pass leaves Inf/NaN in the sums, so one check suffices. */
+        if (!ml_is_finite(loss)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+        losses[history_length++] = loss;
+        if (history_length >= 2U) {
+            if (fabs(losses[history_length - 2U] - loss) <= config->tolerance) {
+                if (++stable_count >= config->patience) break;
+            } else stable_count = 0U;
+        }
+        if (final_pass) break;
+
+        const double factor = 2.0 / (double)target_count;
         bias_gradient *= factor;
         if (!ml_is_finite(bias_gradient)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
-        for (size_t col = 0U; col < model->feature_count; ++col) {
-            gradient[col] *= factor;
-            double updated = model->weights[col] - config->learning_rate * gradient[col];
-            if (!ml_is_finite(gradient[col]) || !ml_is_finite(updated)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+        for (size_t col = 0U; col < d; ++col) {
+            const double g = gradient[col] * factor + 2.0 * config->l2 * model->weights[col];
+            const double updated = model->weights[col] - config->learning_rate * g;
+            if (!ml_is_finite(g) || !ml_is_finite(updated)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
             model->weights[col] = updated;
         }
         model->bias -= config->learning_rate * bias_gradient;
         if (!ml_is_finite(model->bias)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
-        status = ml_linear_regression_mse(model, features, targets, target_count, &loss);
-        if (status != ML_STATUS_OK) goto rollback;
-        losses[history_length++] = loss;
-        if (fabs(losses[history_length - 2U] - loss) <= config->tolerance) {
-            ++stable_count;
-            if (stable_count >= config->patience) break;
-        } else stable_count = 0U;
     }
     free(weights_before); free(gradient);
     if (history != NULL) { history->mse_values = losses; history->length = history_length; }
