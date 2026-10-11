@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ml_numeric.h"
+
 struct MLLinearRegression {
     size_t feature_count;
     double *weights;
@@ -17,7 +19,7 @@ static int features_valid(const MLMatrix *features, size_t feature_count)
         matrix_const_data(features) == NULL) return 0;
     size_t count = matrix_rows(features) * matrix_cols(features);
     for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(matrix_const_data(features)[i])) return 0;
+        if (!ml_is_finite(matrix_const_data(features)[i])) return 0;
     return 1;
 }
 
@@ -25,7 +27,7 @@ static int targets_valid(const double *targets, size_t count)
 {
     if (targets == NULL || count == 0U) return 0;
     for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(targets[i])) return 0;
+        if (!ml_is_finite(targets[i])) return 0;
     return 1;
 }
 
@@ -64,9 +66,9 @@ MLStatus ml_linear_regression_set_parameters(MLLinearRegression *model,
 {
     if (model == NULL || weights == NULL || weight_count != model->feature_count)
         return ML_STATUS_INVALID_ARGUMENT;
-    if (!isfinite(bias)) return ML_STATUS_NUMERIC_ERROR;
+    if (!ml_is_finite(bias)) return ML_STATUS_NUMERIC_ERROR;
     for (size_t i = 0U; i < weight_count; ++i)
-        if (!isfinite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
     memmove(model->weights, weights, weight_count * sizeof(*weights));
     model->bias = bias;
     return ML_STATUS_OK;
@@ -91,7 +93,7 @@ static MLStatus predict_value(const MLLinearRegression *model, const double *row
     double value = model->bias;
     for (size_t col = 0U; col < model->feature_count; ++col) {
         value += model->weights[col] * row[col];
-        if (!isfinite(value)) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(value)) return ML_STATUS_NUMERIC_ERROR;
     }
     *out = value;
     return ML_STATUS_OK;
@@ -128,10 +130,10 @@ MLStatus ml_linear_regression_mse(const MLLinearRegression *model,
         if (status != ML_STATUS_OK) return status;
         double error = prediction - targets[row];
         sum += error * error;
-        if (!isfinite(sum)) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(sum)) return ML_STATUS_NUMERIC_ERROR;
     }
     *out = sum / (double)target_count;
-    return isfinite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
+    return ml_is_finite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
 }
 
 MLStatus ml_linear_regression_train(MLLinearRegression *model,
@@ -144,8 +146,8 @@ MLStatus ml_linear_regression_train(MLLinearRegression *model,
     if (model == NULL || config == NULL || !features_valid(features, model->feature_count) ||
         matrix_rows(features) != target_count || !targets_valid(targets, target_count) ||
         config->max_iterations == 0U || config->patience == 0U ||
-        !isfinite(config->learning_rate) || config->learning_rate <= 0.0 ||
-        !isfinite(config->tolerance) || config->tolerance < 0.0 ||
+        !ml_is_finite(config->learning_rate) || config->learning_rate <= 0.0 ||
+        !ml_is_finite(config->tolerance) || config->tolerance < 0.0 ||
         config->max_iterations == SIZE_MAX || config->max_iterations + 1U > SIZE_MAX / sizeof(double))
         return ML_STATUS_INVALID_ARGUMENT;
 
@@ -177,15 +179,15 @@ MLStatus ml_linear_regression_train(MLLinearRegression *model,
         }
         double factor = 2.0 / (double)target_count;
         bias_gradient *= factor;
-        if (!isfinite(bias_gradient)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+        if (!ml_is_finite(bias_gradient)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
         for (size_t col = 0U; col < model->feature_count; ++col) {
             gradient[col] *= factor;
             double updated = model->weights[col] - config->learning_rate * gradient[col];
-            if (!isfinite(gradient[col]) || !isfinite(updated)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+            if (!ml_is_finite(gradient[col]) || !ml_is_finite(updated)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
             model->weights[col] = updated;
         }
         model->bias -= config->learning_rate * bias_gradient;
-        if (!isfinite(model->bias)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+        if (!ml_is_finite(model->bias)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
         status = ml_linear_regression_mse(model, features, targets, target_count, &loss);
         if (status != ML_STATUS_OK) goto rollback;
         losses[history_length++] = loss;
@@ -222,7 +224,7 @@ MLStatus ml_linear_regression_split(const MLMatrix *features, const double *targ
     memset(out, 0, sizeof(*out));
     if (features == NULL || sample_count < 2U || matrix_rows(features) != sample_count ||
         matrix_cols(features) == 0U || !targets_valid(targets, sample_count) ||
-        !isfinite(train_fraction) || train_fraction <= 0.0 || train_fraction >= 1.0)
+        !ml_is_finite(train_fraction) || train_fraction <= 0.0 || train_fraction >= 1.0)
         return ML_STATUS_INVALID_ARGUMENT;
     const size_t train_count = (size_t)((double)sample_count * train_fraction);
     if (train_count == 0U || train_count >= sample_count ||
@@ -231,7 +233,7 @@ MLStatus ml_linear_regression_split(const MLMatrix *features, const double *targ
         sample_count - train_count > SIZE_MAX / sizeof(double))
         return ML_STATUS_INVALID_ARGUMENT;
     for (size_t i = 0U; i < sample_count * matrix_cols(features); ++i)
-        if (!isfinite(matrix_const_data(features)[i])) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(matrix_const_data(features)[i])) return ML_STATUS_NUMERIC_ERROR;
     size_t *indices = malloc(sample_count * sizeof(*indices));
     if (indices == NULL) return ML_STATUS_OUT_OF_MEMORY;
     for (size_t i = 0U; i < sample_count; ++i) indices[i] = i;

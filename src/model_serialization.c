@@ -6,24 +6,66 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+#include "ml_numeric.h"
+
+static int scaling_present(const MLFeatureScaling *scaling)
+{
+    return scaling != NULL && scaling->feature_count != 0U;
+}
+
+static int replace_file(const char *source, const char *destination)
+{
+#ifdef _WIN32
+    return MoveFileExA(source, destination, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return rename(source, destination) == 0;
+#endif
+}
+
 static MLStatus save_model(const char *path, const char *type, size_t count,
-                           const double *weights, double bias)
+                           const double *weights, double bias,
+                           const MLFeatureScaling *scaling)
 {
     FILE *file;
+    char *temporary_path;
+    size_t path_length;
     int failed = 0;
+    const int scaled = scaling_present(scaling);
     if (path == NULL || path[0] == '\0' || weights == NULL || count == 0U)
         return ML_STATUS_INVALID_ARGUMENT;
     if (count > ML_MODEL_SERIALIZATION_MAX_FEATURES) return ML_STATUS_INVALID_ARGUMENT;
-    if (!isfinite(bias)) return ML_STATUS_NUMERIC_ERROR;
-    for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
-    file = fopen(path, "wb");
-    if (file == NULL) return ML_STATUS_IO_ERROR;
-    if (fprintf(file, "CMLMODEL 1\n%s\n%zu\n%a\n", type, count, bias) < 0)
+    if (scaled && (scaling->feature_count != count || scaling->means == NULL || scaling->scales == NULL))
+        return ML_STATUS_INVALID_ARGUMENT;
+    if (!ml_is_finite(bias)) return ML_STATUS_NUMERIC_ERROR;
+    for (size_t i = 0U; i < count; ++i) {
+        if (!ml_is_finite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
+        if (scaled && (!ml_is_finite(scaling->means[i]) || !ml_is_finite(scaling->scales[i]) ||
+                       scaling->scales[i] <= 0.0)) return ML_STATUS_NUMERIC_ERROR;
+    }
+    path_length = strlen(path);
+    if (path_length > SIZE_MAX - 5U) return ML_STATUS_INVALID_ARGUMENT;
+    temporary_path = malloc(path_length + 5U);
+    if (temporary_path == NULL) return ML_STATUS_OUT_OF_MEMORY;
+    memcpy(temporary_path, path, path_length);
+    memcpy(temporary_path + path_length, ".tmp", 5U);
+    file = fopen(temporary_path, "wb");
+    if (file == NULL) { free(temporary_path); return ML_STATUS_IO_ERROR; }
+    if (fprintf(file, "CMLMODEL %d\n%s\n%zu\n%a\n", scaled ? 2 : 1, type, count, bias) < 0)
         failed = 1;
     for (size_t i = 0U; !failed && i < count; ++i)
         if (fprintf(file, "%a\n", weights[i]) < 0) failed = 1;
+    if (!failed && scaled && fprintf(file, "standard\n") < 0) failed = 1;
+    for (size_t i = 0U; !failed && scaled && i < count; ++i)
+        if (fprintf(file, "%a %a\n", scaling->means[i], scaling->scales[i]) < 0) failed = 1;
     if (fclose(file) != 0) failed = 1;
+    if (!failed && !replace_file(temporary_path, path)) failed = 1;
+    if (failed) (void)remove(temporary_path);
+    free(temporary_path);
     return failed ? ML_STATUS_IO_ERROR : ML_STATUS_OK;
 }
 
@@ -71,23 +113,46 @@ static int parse_double(const char *token, double *out)
     errno = 0;
     value = strtod(token, &end);
     if (end == token || *end != '\0') return 0;
-    if (errno == ERANGE || !isfinite(value)) return -1;
+    if (errno == ERANGE || !ml_is_finite(value)) return -1;
     *out = value;
     return 1;
 }
 
-static MLStatus read_model(const char *path, const char *expected_type,
-                           size_t *count_out, double **weights_out, double *bias_out)
+/* Parses `count` doubles into `values`. Returns OK, PARSE_ERROR, or NUMERIC_ERROR. */
+static MLStatus parse_doubles(char **cursor, double *values, size_t count)
+{
+    for (size_t i = 0U; i < count; ++i) {
+        const int parsed = parse_double(next_token(cursor), &values[i]);
+        if (parsed < 0) return ML_STATUS_NUMERIC_ERROR;
+        if (parsed == 0) return ML_STATUS_PARSE_ERROR;
+    }
+    return ML_STATUS_OK;
+}
+
+typedef struct {
+    size_t count;
+    double bias;
+    double *weights;
+    /* Interleaved mean/scale pairs; NULL for version 1. */
+    double *scaling_pairs;
+} ParsedModel;
+
+static void parsed_model_destroy(ParsedModel *model)
+{
+    free(model->weights);
+    free(model->scaling_pairs);
+    memset(model, 0, sizeof(*model));
+}
+
+static MLStatus read_model(const char *path, const char *expected_type, ParsedModel *out)
 {
     FILE *file;
     long file_size;
     char *buffer = NULL;
-    double *weights = NULL;
+    ParsedModel parsed = {0U, 0.0, NULL, NULL};
     MLStatus status = ML_STATUS_PARSE_ERROR;
-    if (path == NULL || path[0] == '\0' || count_out == NULL ||
-        weights_out == NULL || bias_out == NULL) return ML_STATUS_INVALID_ARGUMENT;
-    *count_out = 0U;
-    *weights_out = NULL;
+    memset(out, 0, sizeof(*out));
+    if (path == NULL || path[0] == '\0') return ML_STATUS_INVALID_ARGUMENT;
     file = fopen(path, "rb");
     if (file == NULL) return ML_STATUS_IO_ERROR;
     if (fseek(file, 0L, SEEK_END) != 0 || (file_size = ftell(file)) < 0L ||
@@ -112,88 +177,167 @@ static MLStatus read_model(const char *path, const char *expected_type,
         char *version = next_token(&cursor);
         char *type = next_token(&cursor);
         char *count_token = next_token(&cursor);
-        size_t count;
-        double bias;
+        int scaled;
         if (magic == NULL || strcmp(magic, "CMLMODEL") != 0 || version == NULL ||
-            strcmp(version, "1") != 0 || type == NULL || strcmp(type, expected_type) != 0 ||
-            !parse_count(count_token, &count)) goto cleanup;
-        {
-            char *bias_token = next_token(&cursor);
-            int parsed;
-            if (bias_token == NULL) goto cleanup;
-            parsed = parse_double(bias_token, &bias);
-            if (parsed <= 0) { if (parsed < 0) status = ML_STATUS_NUMERIC_ERROR; goto cleanup; }
+            (strcmp(version, "1") != 0 && strcmp(version, "2") != 0) || type == NULL ||
+            strcmp(type, expected_type) != 0 || !parse_count(count_token, &parsed.count)) goto cleanup;
+        scaled = version[0] == '2';
+        status = parse_doubles(&cursor, &parsed.bias, 1U);
+        if (status != ML_STATUS_OK) goto cleanup;
+        if (parsed.count > SIZE_MAX / (2U * sizeof(double))) { status = ML_STATUS_OUT_OF_MEMORY; goto cleanup; }
+        parsed.weights = malloc(parsed.count * sizeof(*parsed.weights));
+        if (parsed.weights == NULL) { status = ML_STATUS_OUT_OF_MEMORY; goto cleanup; }
+        status = parse_doubles(&cursor, parsed.weights, parsed.count);
+        if (status != ML_STATUS_OK) goto cleanup;
+        if (scaled) {
+            char *method = next_token(&cursor);
+            status = ML_STATUS_PARSE_ERROR;
+            if (method == NULL || strcmp(method, "standard") != 0) goto cleanup;
+            parsed.scaling_pairs = malloc(2U * parsed.count * sizeof(*parsed.scaling_pairs));
+            if (parsed.scaling_pairs == NULL) { status = ML_STATUS_OUT_OF_MEMORY; goto cleanup; }
+            status = parse_doubles(&cursor, parsed.scaling_pairs, 2U * parsed.count);
+            if (status != ML_STATUS_OK) goto cleanup;
+            for (size_t i = 0U; i < parsed.count; ++i)
+                if (parsed.scaling_pairs[2U * i + 1U] <= 0.0) { status = ML_STATUS_NUMERIC_ERROR; goto cleanup; }
         }
-        if (count > SIZE_MAX / sizeof(*weights)) { status = ML_STATUS_OUT_OF_MEMORY; goto cleanup; }
-        weights = malloc(count * sizeof(*weights));
-        if (weights == NULL) { status = ML_STATUS_OUT_OF_MEMORY; goto cleanup; }
-        for (size_t i = 0U; i < count; ++i) {
-            char *token = next_token(&cursor);
-            int parsed;
-            if (token == NULL) goto cleanup;
-            parsed = parse_double(token, &weights[i]);
-            if (parsed <= 0) { if (parsed < 0) status = ML_STATUS_NUMERIC_ERROR; goto cleanup; }
-        }
+        status = ML_STATUS_PARSE_ERROR;
         if (next_token(&cursor) != NULL) goto cleanup;
-        *count_out = count;
-        *bias_out = bias;
-        *weights_out = weights;
-        weights = NULL;
+        *out = parsed;
+        memset(&parsed, 0, sizeof(parsed));
         status = ML_STATUS_OK;
     }
 cleanup:
     if (file != NULL) (void)fclose(file);
-    free(weights);
+    parsed_model_destroy(&parsed);
     free(buffer);
     return status;
 }
 
-MLStatus ml_model_save_linear(const char *path, const MLLinearRegression *model)
+static MLStatus build_scaling(const ParsedModel *parsed, MLFeatureScaling *scaling)
+{
+    double *means, *scales;
+    MLStatus status;
+    if (parsed->scaling_pairs == NULL) return ML_STATUS_OK;
+    means = malloc(parsed->count * sizeof(*means));
+    scales = malloc(parsed->count * sizeof(*scales));
+    if (means == NULL || scales == NULL) { free(means); free(scales); return ML_STATUS_OUT_OF_MEMORY; }
+    for (size_t i = 0U; i < parsed->count; ++i) {
+        means[i] = parsed->scaling_pairs[2U * i];
+        scales[i] = parsed->scaling_pairs[2U * i + 1U];
+    }
+    status = ml_feature_scaling_create(means, scales, parsed->count, scaling);
+    free(means);
+    free(scales);
+    return status;
+}
+
+MLStatus ml_model_save_linear_scaled(const char *path, const MLLinearRegression *model,
+                                     const MLFeatureScaling *scaling)
 {
     if (model == NULL) return ML_STATUS_INVALID_ARGUMENT;
     return save_model(path, "linear", ml_linear_regression_feature_count(model),
-                      ml_linear_regression_weights(model), ml_linear_regression_bias(model));
+                      ml_linear_regression_weights(model), ml_linear_regression_bias(model), scaling);
+}
+
+MLStatus ml_model_save_logistic_scaled(const char *path, const MLLogisticRegression *model,
+                                       const MLFeatureScaling *scaling)
+{
+    if (model == NULL) return ML_STATUS_INVALID_ARGUMENT;
+    return save_model(path, "logistic", ml_logistic_regression_feature_count(model),
+                      ml_logistic_regression_weights(model), ml_logistic_regression_bias(model),
+                      scaling);
+}
+
+MLStatus ml_model_save_linear(const char *path, const MLLinearRegression *model)
+{
+    return ml_model_save_linear_scaled(path, model, NULL);
 }
 
 MLStatus ml_model_save_logistic(const char *path, const MLLogisticRegression *model)
 {
-    if (model == NULL) return ML_STATUS_INVALID_ARGUMENT;
-    return save_model(path, "logistic", ml_logistic_regression_feature_count(model),
-                      ml_logistic_regression_weights(model), ml_logistic_regression_bias(model));
+    return ml_model_save_logistic_scaled(path, model, NULL);
+}
+
+MLStatus ml_model_load_linear_scaled(const char *path, MLLinearRegression **out,
+                                     MLFeatureScaling *scaling)
+{
+    ParsedModel parsed;
+    MLLinearRegression *model = NULL;
+    MLStatus status;
+    if (out == NULL || scaling == NULL) {
+        if (out != NULL) *out = NULL;
+        if (scaling != NULL) memset(scaling, 0, sizeof(*scaling));
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    *out = NULL;
+    memset(scaling, 0, sizeof(*scaling));
+    status = read_model(path, "linear", &parsed);
+    if (status != ML_STATUS_OK) return status;
+    status = ml_linear_regression_create(parsed.count, &model);
+    if (status == ML_STATUS_OK)
+        status = ml_linear_regression_set_parameters(model, parsed.weights, parsed.count, parsed.bias);
+    if (status == ML_STATUS_OK) status = build_scaling(&parsed, scaling);
+    parsed_model_destroy(&parsed);
+    if (status != ML_STATUS_OK) {
+        ml_linear_regression_destroy(model);
+        ml_feature_scaling_destroy(scaling);
+        return status;
+    }
+    *out = model;
+    return ML_STATUS_OK;
+}
+
+MLStatus ml_model_load_logistic_scaled(const char *path, MLLogisticRegression **out,
+                                       MLFeatureScaling *scaling)
+{
+    ParsedModel parsed;
+    MLLogisticRegression *model = NULL;
+    MLStatus status;
+    if (out == NULL || scaling == NULL) {
+        if (out != NULL) *out = NULL;
+        if (scaling != NULL) memset(scaling, 0, sizeof(*scaling));
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    *out = NULL;
+    memset(scaling, 0, sizeof(*scaling));
+    status = read_model(path, "logistic", &parsed);
+    if (status != ML_STATUS_OK) return status;
+    status = ml_logistic_regression_create(parsed.count, &model);
+    if (status == ML_STATUS_OK)
+        status = ml_logistic_regression_set_parameters(model, parsed.weights, parsed.count, parsed.bias);
+    if (status == ML_STATUS_OK) status = build_scaling(&parsed, scaling);
+    parsed_model_destroy(&parsed);
+    if (status != ML_STATUS_OK) {
+        ml_logistic_regression_destroy(model);
+        ml_feature_scaling_destroy(scaling);
+        return status;
+    }
+    *out = model;
+    return ML_STATUS_OK;
 }
 
 MLStatus ml_model_load_linear(const char *path, MLLinearRegression **out)
 {
-    size_t count;
-    double *weights = NULL, bias;
-    MLLinearRegression *model = NULL;
-    MLStatus status;
-    if (out == NULL) return ML_STATUS_INVALID_ARGUMENT;
-    *out = NULL;
-    status = read_model(path, "linear", &count, &weights, &bias);
-    if (status != ML_STATUS_OK) return status;
-    status = ml_linear_regression_create(count, &model);
-    if (status == ML_STATUS_OK) status = ml_linear_regression_set_parameters(model, weights, count, bias);
-    free(weights);
-    if (status != ML_STATUS_OK) { ml_linear_regression_destroy(model); return status; }
-    *out = model;
-    return ML_STATUS_OK;
+    MLFeatureScaling scaling = {0U, NULL, NULL};
+    MLStatus status = ml_model_load_linear_scaled(path, out, &scaling);
+    if (status == ML_STATUS_OK && scaling_present(&scaling)) {
+        ml_linear_regression_destroy(*out);
+        *out = NULL;
+        status = ML_STATUS_INVALID_ARGUMENT;
+    }
+    ml_feature_scaling_destroy(&scaling);
+    return status;
 }
 
 MLStatus ml_model_load_logistic(const char *path, MLLogisticRegression **out)
 {
-    size_t count;
-    double *weights = NULL, bias;
-    MLLogisticRegression *model = NULL;
-    MLStatus status;
-    if (out == NULL) return ML_STATUS_INVALID_ARGUMENT;
-    *out = NULL;
-    status = read_model(path, "logistic", &count, &weights, &bias);
-    if (status != ML_STATUS_OK) return status;
-    status = ml_logistic_regression_create(count, &model);
-    if (status == ML_STATUS_OK) status = ml_logistic_regression_set_parameters(model, weights, count, bias);
-    free(weights);
-    if (status != ML_STATUS_OK) { ml_logistic_regression_destroy(model); return status; }
-    *out = model;
-    return ML_STATUS_OK;
+    MLFeatureScaling scaling = {0U, NULL, NULL};
+    MLStatus status = ml_model_load_logistic_scaled(path, out, &scaling);
+    if (status == ML_STATUS_OK && scaling_present(&scaling)) {
+        ml_logistic_regression_destroy(*out);
+        *out = NULL;
+        status = ML_STATUS_INVALID_ARGUMENT;
+    }
+    ml_feature_scaling_destroy(&scaling);
+    return status;
 }

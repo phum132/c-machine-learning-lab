@@ -75,3 +75,11 @@
 **เกณฑ์รับ:** setup ทำซ้ำได้จาก clean checkout; docs/commands/features ตรง implementation; test และ benchmark claims มีหลักฐาน; CI ผ่านจริง; ไม่มี secret หรือ generated artifact ที่ไม่ตั้งใจ
 
 **สถานะ:** เสร็จ. README/architecture และ CSV examples ตรง implementation; fresh clone ของ commit `616b959` ผ่าน `build.bat test` และตัวอย่าง CLI; GitHub Actions run [38022806001](https://github.com/phum132/repo132/actions/runs/38022806001) ผ่าน. ตรวจ staged source ก่อน initial commit ไม่พบ key/token และ `build/` ถูก ignore. ดู [Phase I handoff](phase-i-handoff.md) สำหรับหลักฐานและข้อจำกัดที่เหลือ.
+
+## Phase J — CLI evaluation workflow
+
+**งาน:** normalization ที่เก็บในโมเดล, validation split, คำสั่ง `evaluate`, regression metrics, การเขียนโมเดลแบบแทนที่เมื่อสำเร็จ และแก้ `-Wfloat-conversion` จาก `isfinite` ของ MinGW
+
+**เกณฑ์รับ:** สถิติ scaling คำนวณจาก train เท่านั้นและ round-trip ผ่าน model file; โมเดลเดิม (version 1) ยังโหลดได้; save ที่ล้มเหลวไม่ทำลายไฟล์เดิม; metrics มี known-value tests; CLI exit codes ตามสัญญาเดิม; build/test/sanitizer ผ่าน
+
+**สถานะ:** local acceptance checks ผ่าน ยังไม่ได้ยืนยัน hosted CI. Format version 2 และนโยบาย loader อยู่ใน [ADR-003](adr-003-model-serialization.md); ผลตรวจอยู่ใน [Phase J handoff](phase-j-handoff.md).

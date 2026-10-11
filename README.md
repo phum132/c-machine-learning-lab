@@ -42,7 +42,18 @@ build.bat test
 .\build\cml-lab.exe predict --model build\linear.cml --input examples\linear-features.csv
 ```
 
-`--target` ใช้ column index เริ่มจากศูนย์; prediction CSV ต้องไม่มี header และมีเฉพาะ feature columns. Linear model พิมพ์หนึ่งค่าต่อแถว. Logistic model พิมพ์ `probability,class` และรับ `--threshold` (ค่าเริ่มต้น `0.5`). ดู `.\build\cml-lab.exe --help` สำหรับ syntax ทั้งหมด
+`--target` ใช้ column index เริ่มจากศูนย์; prediction CSV ต้องไม่มี header และมีเฉพาะ feature columns. Linear model พิมพ์หนึ่งค่าต่อแถว. Logistic model พิมพ์ `probability,class` และรับ `--threshold` (ค่าเริ่มต้น `0.5`). หลัง train เสร็จ CLI พิมพ์ metrics ของ training set ด้วย. ดู `.\build\cml-lab.exe --help` สำหรับ syntax ทั้งหมด
+
+### Normalization, validation split และ evaluate
+
+```bat
+.\build\cml-lab.exe train --type linear --data examples\linear-train.csv --target 1 --header --model build\linear.cml --iterations 3000 --learning-rate 0.1 --normalize --validation-split 0.2 --seed 7
+.\build\cml-lab.exe evaluate --model build\linear.cml --data examples\linear-train.csv --target 1 --header
+```
+
+- `--normalize` คำนวณ mean และ population std ของแต่ละ feature จากแถว train เท่านั้น แล้วเก็บไว้ในไฟล์โมเดล (format version 2). `predict` และ `evaluate` ปรับสเกล input ให้อัตโนมัติ จึงส่ง feature ดิบได้เลย. Feature ที่ค่าคงที่ใช้ scale `1`
+- `--validation-split F` (`0 < F < 1`) สุ่มแยกแถวไว้เป็น validation ด้วย `--seed` (ค่าเริ่มต้น `42`) แล้วพิมพ์ metrics ทั้ง `Training:` และ `Validation:`. `--seed` ใช้ได้เฉพาะกับ `--validation-split`
+- `evaluate` อ่าน CSV ที่มี target แล้วพิมพ์ MAE/RMSE/R² สำหรับ linear (R² เป็น `n/a` เมื่อ target ค่าคงที่) หรือ accuracy/precision/recall/F1 และ confusion counts สำหรับ logistic (รับ `--threshold`)
 
 Exit code: `0` สำเร็จ, `1` runtime/data/model error, `2` arguments ไม่ถูกต้อง. CSV parser ใช้ grammar แบบ strict และจำกัดขนาด input; รายละเอียดอยู่ใน [ADR-001](docs/adr-001-dataset-csv.md). Model format และ limits อยู่ใน [ADR-003](docs/adr-003-model-serialization.md).
 
@@ -65,9 +76,11 @@ Exit code: `0` สำเร็จ, `1` runtime/data/model error, `2` arguments �
 - [Linear regression](include/linear_regression.h): prediction, MSE, full-batch gradient descent และ seeded train/validation split
 - [Logistic regression](include/logistic_regression.h): binary labels, stable sigmoid/cross-entropy และ probability/class prediction
 - [Classification metrics](include/classification_metrics.h): accuracy, precision, recall, F1 และ confusion counts
+- [Regression metrics](include/regression_metrics.h): MAE, RMSE และ R²
+- [Feature scaling](include/feature_scaling.h): fit/apply standardization แบบ mean/std
 - [Dataset](include/dataset.h): strict numeric CSV loader พร้อมเลือก target column
-- [Serialization](include/model_serialization.h): versioned ASCII model save/load
-- [CLI](include/app_cli.h): train, save, load และ batch prediction จาก CSV
+- [Serialization](include/model_serialization.h): versioned ASCII model save/load (v1 parameters, v2 รวม scaling) เขียนผ่านไฟล์ชั่วคราวแล้วค่อยแทนที่
+- [CLI](include/app_cli.h): train (normalize/validation split), evaluate และ batch prediction จาก CSV
 
 API ใช้ `MLStatus` ส่งผลลัพธ์; output object ที่สร้างสำเร็จเป็นของ caller และต้องทำลายด้วยฟังก์ชันคู่กัน ส่วน getter ที่ระบุ borrowed view ยังคงมีอายุเท่ากับ owner ดูรายละเอียด ownership และ module flow ใน [architecture](docs/architecture.md).
 
@@ -87,9 +100,9 @@ Phase H handoff บันทึกผลที่รันจริง. Benchmar
 
 ## Known limitations
 
-- Training CLI ใช้ทุกแถวที่ให้มา; ไม่มี CLI option สำหรับ normalization หรือ validation split
-- Logistic CLI ยังไม่เปิด metrics/batch evaluation
-- Model writer ยังไม่เขียนไฟล์แบบ atomic; serialization ต้องใช้ C numeric locale
+- Validation split เป็นการสุ่มแบบครั้งเดียว ไม่ stratify label และยังไม่มี k-fold
+- Model writer แทนที่ไฟล์ด้วย rename/MoveFileEx แต่ไม่ fsync จึงไม่รับประกันข้อมูลเมื่อไฟดับ; ใช้ `<path>.tmp` ชื่อตายตัว จึงไม่รองรับการเขียนไฟล์เดียวกันพร้อมกัน; serialization ต้องใช้ C numeric locale
+- เดโมใน `examples/` และ `scripts/run_linear_csv.py` ยังปรับสเกลใน Python เอง ไม่ได้ใช้ `--normalize`
 - GCC MSYS2 ที่ใช้ในเครื่อง Windows นี้ไม่มี sanitizer runtime; ASan/UBSan ผ่านด้วย MSYS2 Clang แทน
 - CI run ที่ยืนยันล่าสุดเป็นผลของ commit `616b959`; รันใหม่เมื่อมี commit ถัดไป
 

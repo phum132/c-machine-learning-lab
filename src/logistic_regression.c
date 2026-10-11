@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ml_numeric.h"
+
 struct MLLogisticRegression {
     size_t feature_count;
     double *weights;
@@ -21,7 +23,7 @@ static int features_valid(const MLMatrix *features, size_t feature_count)
     data = matrix_const_data(features);
     count = matrix_rows(features) * matrix_cols(features);
     for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(data[i])) return 0;
+        if (!ml_is_finite(data[i])) return 0;
     return 1;
 }
 
@@ -29,7 +31,7 @@ static int labels_valid(const double *labels, size_t count)
 {
     if (labels == NULL || count == 0U) return 0;
     for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(labels[i]) || (labels[i] != 0.0 && labels[i] != 1.0)) return 0;
+        if (!ml_is_finite(labels[i]) || (labels[i] != 0.0 && labels[i] != 1.0)) return 0;
     return 1;
 }
 
@@ -47,9 +49,9 @@ MLStatus ml_sigmoid(double logit, double *out)
 {
     if (out == NULL) return ML_STATUS_INVALID_ARGUMENT;
     *out = 0.0;
-    if (!isfinite(logit)) return ML_STATUS_INVALID_ARGUMENT;
+    if (!ml_is_finite(logit)) return ML_STATUS_INVALID_ARGUMENT;
     *out = sigmoid_value(logit);
-    return isfinite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
+    return ml_is_finite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
 }
 
 MLStatus ml_logistic_regression_create(size_t feature_count, MLLogisticRegression **out)
@@ -91,9 +93,9 @@ MLStatus ml_logistic_regression_set_parameters(MLLogisticRegression *model,
 {
     if (model == NULL || weights == NULL || weight_count != model->feature_count)
         return ML_STATUS_INVALID_ARGUMENT;
-    if (!isfinite(bias)) return ML_STATUS_NUMERIC_ERROR;
+    if (!ml_is_finite(bias)) return ML_STATUS_NUMERIC_ERROR;
     for (size_t i = 0U; i < weight_count; ++i)
-        if (!isfinite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(weights[i])) return ML_STATUS_NUMERIC_ERROR;
     memmove(model->weights, weights, weight_count * sizeof(*weights));
     model->bias = bias;
     return ML_STATUS_OK;
@@ -113,7 +115,7 @@ static MLStatus predict_logit(const MLLogisticRegression *model, const double *r
     double value = model->bias;
     for (size_t col = 0U; col < model->feature_count; ++col) {
         value += model->weights[col] * row[col];
-        if (!isfinite(value)) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(value)) return ML_STATUS_NUMERIC_ERROR;
     }
     *out = value;
     return ML_STATUS_OK;
@@ -136,7 +138,7 @@ static MLStatus predict_probabilities(const MLLogisticRegression *model,
                                &logit);
         if (status != ML_STATUS_OK) goto error;
         matrix_data(*out)[row] = sigmoid_value(logit);
-        if (!isfinite(matrix_data(*out)[row])) { status = ML_STATUS_NUMERIC_ERROR; goto error; }
+        if (!ml_is_finite(matrix_data(*out)[row])) { status = ML_STATUS_NUMERIC_ERROR; goto error; }
     }
     return ML_STATUS_OK;
 
@@ -161,7 +163,7 @@ MLStatus ml_logistic_regression_predict_classes(const MLLogisticRegression *mode
     MLStatus status;
     if (out == NULL) return ML_STATUS_INVALID_ARGUMENT;
     *out = NULL;
-    if (!isfinite(threshold) || threshold < 0.0 || threshold > 1.0)
+    if (!ml_is_finite(threshold) || threshold < 0.0 || threshold > 1.0)
         return ML_STATUS_INVALID_ARGUMENT;
     status = predict_probabilities(model, features, &probabilities);
     if (status != ML_STATUS_OK) return status;
@@ -192,10 +194,10 @@ MLStatus ml_logistic_regression_binary_cross_entropy(const MLLogisticRegression 
         /* log(1 + exp(logit)) - label*logit, expressed without overflow. */
         loss = fmax(logit, 0.0) - logit * labels[row] + log1p(exp(-fabs(logit)));
         total += loss;
-        if (!isfinite(loss) || !isfinite(total)) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(loss) || !ml_is_finite(total)) return ML_STATUS_NUMERIC_ERROR;
     }
     *out = total / (double)label_count;
-    return isfinite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
+    return ml_is_finite(*out) ? ML_STATUS_OK : ML_STATUS_NUMERIC_ERROR;
 }
 
 MLStatus ml_logistic_regression_train(MLLogisticRegression *model,
@@ -217,8 +219,8 @@ MLStatus ml_logistic_regression_train(MLLogisticRegression *model,
     if (model == NULL || config == NULL || !features_valid(features, model->feature_count) ||
         matrix_rows(features) != label_count || !labels_valid(labels, label_count) ||
         config->max_iterations == 0U || config->patience == 0U ||
-        !isfinite(config->learning_rate) || config->learning_rate <= 0.0 ||
-        !isfinite(config->tolerance) || config->tolerance < 0.0 ||
+        !ml_is_finite(config->learning_rate) || config->learning_rate <= 0.0 ||
+        !ml_is_finite(config->tolerance) || config->tolerance < 0.0 ||
         config->max_iterations == SIZE_MAX ||
         config->max_iterations + 1U > SIZE_MAX / sizeof(double))
         return ML_STATUS_INVALID_ARGUMENT;
@@ -248,24 +250,24 @@ MLStatus ml_logistic_regression_train(MLLogisticRegression *model,
             if (status != ML_STATUS_OK) goto rollback;
             residual = sigmoid_value(logit) - labels[row];
             bias_gradient += residual;
-            if (!isfinite(bias_gradient)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+            if (!ml_is_finite(bias_gradient)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
             for (size_t col = 0U; col < model->feature_count; ++col) {
                 gradient[col] += residual * features_row[col];
-                if (!isfinite(gradient[col])) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+                if (!ml_is_finite(gradient[col])) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
             }
         }
         bias_gradient /= (double)label_count;
         for (size_t col = 0U; col < model->feature_count; ++col) {
             const double normalized_gradient = gradient[col] / (double)label_count;
             const double updated = model->weights[col] - config->learning_rate * normalized_gradient;
-            if (!isfinite(normalized_gradient) || !isfinite(updated)) {
+            if (!ml_is_finite(normalized_gradient) || !ml_is_finite(updated)) {
                 status = ML_STATUS_NUMERIC_ERROR;
                 goto rollback;
             }
             model->weights[col] = updated;
         }
         model->bias -= config->learning_rate * bias_gradient;
-        if (!isfinite(model->bias)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
+        if (!ml_is_finite(model->bias)) { status = ML_STATUS_NUMERIC_ERROR; goto rollback; }
         status = ml_logistic_regression_binary_cross_entropy(model, features, labels,
                                                              label_count, &loss);
         if (status != ML_STATUS_OK) goto rollback;

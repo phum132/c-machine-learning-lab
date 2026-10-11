@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "ml_numeric.h"
+
 struct MLMatrix {
     size_t rows;
     size_t cols;
@@ -23,7 +25,7 @@ static int matrix_has_finite_data(const MLMatrix *matrix)
 {
     size_t count = matrix->rows * matrix->cols;
     for (size_t index = 0U; index < count; ++index) {
-        if (!isfinite(matrix->data[index])) {
+        if (!ml_is_finite(matrix->data[index])) {
             return 0;
         }
     }
@@ -81,7 +83,7 @@ static MLStatus matrix_elementwise(const MLMatrix *left, const MLMatrix *right,
     size_t count = left->rows * left->cols;
     for (size_t i = 0U; i < count; ++i) {
         double value = subtract ? left->data[i] - right->data[i] : left->data[i] + right->data[i];
-        if (!isfinite(value)) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
+        if (!ml_is_finite(value)) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
         (*out)->data[i] = value;
     }
     return ML_STATUS_OK;
@@ -107,7 +109,7 @@ MLStatus matrix_multiply(const MLMatrix *left, const MLMatrix *right, MLMatrix *
             double sum = 0.0;
             for (size_t inner = 0U; inner < left->cols; ++inner) {
                 sum += left->data[row * left->cols + inner] * right->data[inner * right->cols + col];
-                if (!isfinite(sum)) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
+                if (!ml_is_finite(sum)) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
             }
             (*out)->data[row * right->cols + col] = sum;
         }
@@ -120,14 +122,14 @@ MLStatus matrix_scale(const MLMatrix *matrix, double scalar, MLMatrix **out)
     if (out == NULL) return ML_STATUS_INVALID_ARGUMENT;
     *out = NULL;
     if (!matrix_is_valid(matrix)) return ML_STATUS_INVALID_ARGUMENT;
-    if (!isfinite(scalar)) return ML_STATUS_NUMERIC_ERROR;
+    if (!ml_is_finite(scalar)) return ML_STATUS_NUMERIC_ERROR;
     if (!matrix_has_finite_data(matrix)) return ML_STATUS_NUMERIC_ERROR;
     MLStatus status = matrix_create(matrix->rows, matrix->cols, out);
     if (status != ML_STATUS_OK) return status;
     size_t count = matrix->rows * matrix->cols;
     for (size_t i = 0U; i < count; ++i) {
         (*out)->data[i] = matrix->data[i] * scalar;
-        if (!isfinite((*out)->data[i])) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
+        if (!ml_is_finite((*out)->data[i])) { matrix_destroy(*out); *out = NULL; return ML_STATUS_NUMERIC_ERROR; }
     }
     return ML_STATUS_OK;
 }
@@ -151,9 +153,9 @@ MLStatus matrix_dot(const double *left, const double *right, size_t length, doub
     if (left == NULL || right == NULL || out == NULL || length == 0U) return ML_STATUS_INVALID_ARGUMENT;
     double sum = 0.0;
     for (size_t i = 0U; i < length; ++i) {
-        if (!isfinite(left[i]) || !isfinite(right[i])) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(left[i]) || !ml_is_finite(right[i])) return ML_STATUS_NUMERIC_ERROR;
         sum += left[i] * right[i];
-        if (!isfinite(sum)) return ML_STATUS_NUMERIC_ERROR;
+        if (!ml_is_finite(sum)) return ML_STATUS_NUMERIC_ERROR;
     }
     *out = sum;
     return ML_STATUS_OK;

@@ -120,6 +120,95 @@ def main() -> int:
             return 1
         print("PASS CLI malformed input, dimensions, and argument errors")
 
+        # Large-magnitude feature: raw gradient descent at this rate diverges,
+        # so a good fit shows standardization is applied in train and predict.
+        scaled_train = directory / "scaled-train.csv"
+        scaled_model = directory / "scaled.model"
+        scaled_predict = directory / "scaled-predict.csv"
+        scaled_train.write_text(
+            "x,y\n" + "".join(f"{x * 1000},{2 * x + 1}\n" for x in range(20)), encoding="ascii"
+        )
+        scaled_predict.write_text("25000\n", encoding="ascii")
+        raw = run(
+            executable,
+            "train", "--type", "linear", "--data", str(scaled_train), "--target", "1", "--header",
+            "--model", str(directory / "raw.model"), "--iterations", "3000", "--learning-rate", "0.1",
+        )
+        if raw.returncode != 1 or (directory / "raw.model").exists():
+            print(f"FAIL CLI raw large-magnitude training should diverge: {raw.stdout!r}", file=sys.stderr)
+            return 1
+        trained = run(
+            executable,
+            "train", "--type", "linear", "--data", str(scaled_train), "--target", "1", "--header",
+            "--model", str(scaled_model), "--iterations", "3000", "--learning-rate", "0.1",
+            "--normalize", "--validation-split", "0.25", "--seed", "7",
+        )
+        predicted = run(executable, "predict", "--model", str(scaled_model), "--input", str(scaled_predict))
+        evaluated = run(
+            executable, "evaluate", "--model", str(scaled_model), "--data", str(scaled_train),
+            "--target", "1", "--header",
+        )
+        try:
+            value = float(predicted.stdout.strip())
+            r2 = float(evaluated.stdout.rsplit("R2=", 1)[1])
+        except (ValueError, IndexError):
+            value = r2 = float("nan")
+        if (trained.returncode != 0 or "on 15 rows" not in trained.stdout or
+                "Training: rows=15 " not in trained.stdout or "Validation: rows=5 " not in trained.stdout or
+                not scaled_model.read_text(encoding="ascii").startswith("CMLMODEL 2\n") or
+                predicted.returncode != 0 or abs(value - 51.0) > 0.05 or
+                evaluated.returncode != 0 or "Evaluation: rows=20 " not in evaluated.stdout or
+                not r2 > 0.9999):
+            print(
+                f"FAIL CLI normalize/split/evaluate: {trained.stdout!r} {trained.stderr!r} "
+                f"{predicted.stdout!r} {evaluated.stdout!r} {evaluated.stderr!r}",
+                file=sys.stderr,
+            )
+            return 1
+        print("PASS CLI normalize, validation split, and evaluate")
+
+        evaluated = run(
+            executable, "evaluate", "--model", str(logistic_model), "--data", str(logistic_train),
+            "--target", "1", "--header", "--threshold", "0.5",
+        )
+        if (evaluated.returncode != 0 or
+                "accuracy=1 precision=1 recall=1 F1=1 TP=2 TN=2 FP=0 FN=0" not in evaluated.stdout):
+            print(f"FAIL CLI logistic evaluate: {evaluated.stdout!r} {evaluated.stderr!r}", file=sys.stderr)
+            return 1
+        print("PASS CLI logistic evaluate")
+
+        seed_without_split = run(
+            executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1",
+            "--header", "--model", str(linear_model), "--seed", "3",
+        )
+        bad_fraction = run(
+            executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1",
+            "--header", "--model", str(linear_model), "--validation-split", "1",
+        )
+        empty_train = run(
+            executable, "train", "--type", "linear", "--data", str(train_csv), "--target", "1",
+            "--header", "--model", str(linear_model), "--validation-split", "0.99",
+        )
+        evaluate_missing_target = run(
+            executable, "evaluate", "--model", str(linear_model), "--data", str(train_csv),
+        )
+        evaluate_linear_threshold = run(
+            executable, "evaluate", "--model", str(linear_model), "--data", str(train_csv),
+            "--target", "1", "--header", "--threshold", "0.5",
+        )
+        mismatch_with_extra = directory / "wide.csv"
+        mismatch_with_extra.write_text("1,2,3\n", encoding="ascii")
+        evaluate_mismatch = run(
+            executable, "evaluate", "--model", str(linear_model), "--data", str(mismatch_with_extra),
+            "--target", "0",
+        )
+        if (seed_without_split.returncode != 2 or bad_fraction.returncode != 2 or
+                empty_train.returncode != 1 or evaluate_missing_target.returncode != 2 or
+                evaluate_linear_threshold.returncode != 2 or evaluate_mismatch.returncode != 1):
+            print("FAIL CLI split/evaluate error exit codes", file=sys.stderr)
+            return 1
+        print("PASS CLI split/evaluate argument and data errors")
+
     return 0
 
 

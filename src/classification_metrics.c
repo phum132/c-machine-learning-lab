@@ -2,11 +2,13 @@
 
 #include <math.h>
 
+#include "ml_numeric.h"
+
 static int binary_values_valid(const double *values, size_t count)
 {
     if (values == NULL || count == 0U) return 0;
     for (size_t i = 0U; i < count; ++i)
-        if (!isfinite(values[i]) || (values[i] != 0.0 && values[i] != 1.0)) return 0;
+        if (!ml_is_finite(values[i]) || (values[i] != 0.0 && values[i] != 1.0)) return 0;
     return 1;
 }
 

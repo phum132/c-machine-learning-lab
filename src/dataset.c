@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ml_numeric.h"
+
 #define CSV_MAX_FILE_BYTES (16U * 1024U * 1024U)
 #define CSV_MAX_RECORD_BYTES (64U * 1024U)
 #define CSV_MAX_FIELD_BYTES 4096U
@@ -185,7 +187,7 @@ static MLStatus parse_number(const char *buffer, CSVField field, double *out)
     errno = 0;
     value = strtod(text, &end);
     if (end == text || *end != '\0') return ML_STATUS_PARSE_ERROR;
-    if (errno == ERANGE || !isfinite(value)) return ML_STATUS_NUMERIC_ERROR;
+    if (errno == ERANGE || !ml_is_finite(value)) return ML_STATUS_NUMERIC_ERROR;
     *out = value;
     return ML_STATUS_OK;
 }
