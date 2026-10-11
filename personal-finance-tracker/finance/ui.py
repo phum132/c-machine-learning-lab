@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import queue
 import sqlite3
+import subprocess
 import tkinter as tk
 import threading
 from datetime import date
@@ -11,6 +13,7 @@ from tkinter import messagebox, ttk
 from .database import Database
 from .services import FinanceService
 from .investment import compound_value, fetch_quote
+from .ml import ForecastResult, prepare_forecast, run_forecast
 from .validation import (
     EXPENSE, EXPENSE_CATEGORIES, INCOME, INCOME_CATEGORIES, format_money,
     validate_month,
@@ -90,7 +93,7 @@ class FinanceApp(tk.Tk):
         tabs.add(self.dashboard_tab, text="ภาพรวม")
         tabs.add(self.transactions_tab, text="รายการรับ-จ่าย")
         tabs.add(self.budgets_tab, text="งบประมาณ")
-        tabs.add(self.ml_tab, text="เตรียมข้อมูล ML")
+        tabs.add(self.ml_tab, text="ML และพยากรณ์")
         tabs.add(self.investment_tab, text="แผนลงทุน")
         self._build_dashboard()
         self._build_transactions()
@@ -422,10 +425,24 @@ class FinanceApp(tk.Tk):
         self.forecast_readiness.pack(anchor="w")
         ttk.Label(
             forecast,
-            text="The forecast will use monthly expense totals. Empty months are retained as zero only inside a tracked history window.",
+            text="ใช้ยอดรายจ่ายรายเดือนแยกหมวด ฝึกด้วย cml-lab แล้ววัดผลกับ 3 เดือนล่าสุดเทียบกับการเดาแบบง่าย "
+                 "ระบบจะใช้วิธีที่คลาดเคลื่อนน้อยที่สุดเท่านั้น เดือนที่ยังไม่จบจะไม่ถูกนำมาฝึก",
             style="Sub.TLabel",
             wraplength=900,
-        ).pack(anchor="w", pady=(6, 0))
+        ).pack(anchor="w", pady=(6, 8))
+        forecast_actions = ttk.Frame(forecast)
+        forecast_actions.pack(fill="x")
+        self.forecast_button = ttk.Button(forecast_actions, text="ฝึกโมเดลและพยากรณ์", command=self.run_forecast, style="Accent.TButton")
+        self.forecast_button.pack(side="left")
+        self.forecast_result = ttk.Label(forecast_actions, text="", style="Sub.TLabel", wraplength=760)
+        self.forecast_result.pack(side="left", padx=12)
+        columns = ("category", "last", "average3", "model", "chosen")
+        self.forecast_tree = ttk.Treeview(forecast, columns=columns, show="headings", height=7, selectmode="none")
+        headings = {"category": "หมวดหมู่", "last": "เดือนล่าสุด", "average3": "เฉลี่ย 3 เดือน", "model": "โมเดล CML", "chosen": "คาดการณ์ที่ใช้"}
+        for column in columns:
+            self.forecast_tree.heading(column, text=headings[column])
+            self.forecast_tree.column(column, width=150, anchor="w" if column == "category" else "e")
+        self.forecast_tree.pack(fill="x", pady=(10, 0))
 
         classifier = ttk.LabelFrame(self.ml_tab, text="Transaction review · Logistic Regression", padding=14)
         classifier.pack(fill="x", pady=(0, 12))
@@ -648,7 +665,7 @@ class FinanceApp(tk.Tk):
         except (ValueError, sqlite3.Error) as exc:
             messagebox.showerror("Could not read ML data readiness", str(exc), parent=self)
             return
-        forecast_status = "ready for model implementation" if readiness["forecast_ready"] else "not enough history yet"
+        forecast_status = "พร้อมพยากรณ์" if readiness["forecast_ready"] else "ประวัติยังน้อย (ฝึกได้ตั้งแต่ 8 เดือน แต่ผลจะแกว่ง)"
         classifier_status = "ready for model implementation" if readiness["classifier_ready"] else "not enough reviewed labels yet"
         self.forecast_readiness.configure(
             text=(f"{readiness['expense_months']} / {readiness['forecast_months_required']} expense months · {forecast_status}")
@@ -660,6 +677,50 @@ class FinanceApp(tk.Tk):
                 f"{classifier_status}"
             )
         )
+
+    def run_forecast(self) -> None:
+        try:
+            data = prepare_forecast(self.service, self._selected_month())
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showinfo("ยังพยากรณ์ไม่ได้", str(exc), parent=self)
+            return
+        self.forecast_button.configure(state="disabled", text="กำลังฝึกโมเดล…")
+        outcome: queue.Queue = queue.Queue(maxsize=1)
+
+        def worker() -> None:
+            # Runs the CLI only; Tk widgets are touched on the main thread via polling.
+            try:
+                outcome.put((run_forecast(data), None))
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                outcome.put((None, str(exc)))
+
+        def poll() -> None:
+            try:
+                result, error = outcome.get_nowait()
+            except queue.Empty:
+                self.after(100, poll)
+                return
+            self._apply_forecast(result, error)
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
+
+    def _apply_forecast(self, result: ForecastResult | None, error: str | None) -> None:
+        self.forecast_button.configure(state="normal", text="ฝึกโมเดลและพยากรณ์")
+        if error or result is None:
+            self.forecast_result.configure(text="")
+            messagebox.showerror("พยากรณ์ไม่สำเร็จ", error or "ไม่ทราบสาเหตุ", parent=self)
+            return
+        self.forecast_tree.delete(*self.forecast_tree.get_children())
+        baht = lambda value: format_money(round(value * 100))
+        for item in result.categories:
+            self.forecast_tree.insert("", "end", values=(
+                item.category, baht(item.last_month), baht(item.average3), baht(item.model), baht(item.chosen)))
+        method = {"model": "โมเดล CML", "average3": "ค่าเฉลี่ย 3 เดือน", "last_month": "เท่าเดือนล่าสุด"}[result.method]
+        self.forecast_result.configure(text=(
+            f"คาดการณ์รายจ่ายเดือน {result.target_month}: {baht(result.total)} · ใช้{method} · "
+            f"ทดสอบ {result.test_rows} แถว MAE: โมเดล {baht(result.model_mae)}, "
+            f"เฉลี่ย 3 เดือน {baht(result.average3_mae)}, เท่าเดือนล่าสุด {baht(result.last_month_mae)}"
+        ))
 
     def clear_form(self) -> None:
         self.selected_transaction = None
