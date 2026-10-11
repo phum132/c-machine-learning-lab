@@ -46,6 +46,19 @@ build.bat test
 
 Exit code: `0` สำเร็จ, `1` runtime/data/model error, `2` arguments ไม่ถูกต้อง. CSV parser ใช้ grammar แบบ strict และจำกัดขนาด input; รายละเอียดอยู่ใน [ADR-001](docs/adr-001-dataset-csv.md). Model format และ limits อยู่ใน [ADR-003](docs/adr-003-model-serialization.md).
 
+## เดโมข้อมูลจริง
+
+สคริปต์ Python (standard library เท่านั้น) แบ่ง train/test แบบ seed คงที่, ปรับสเกลจาก train เท่านั้น แล้วเรียก CLI จริงเพื่อ train/predict และรายงาน MAE, RMSE, R²:
+
+- [Thai O-NET](examples/thai-onet/README.md) — ทำนายคะแนนเฉลี่ยวิทยาศาสตร์ ม.3 ของโรงเรียนใน กทม. (101 โรงเรียน) — `python examples/thai-onet/run_demo.py`
+- [Wine Quality](examples/wine-quality/README.md) — ทำนายคุณภาพไวน์จากข้อมูล UCI 6,497 แถว — `python examples/wine-quality/run_demo.py`
+
+ใช้ CSV ของตัวเองผ่าน `scripts/run_linear_csv.py`; ขั้นตอนอยู่ใน [คู่มือใช้ CSV ของคุณ](docs/using-your-csv.md). ผลเดโมเป็น baseline เชิงสาธิต ไม่ใช่ข้อสรุปเชิงสถิติ
+
+## Personal Finance Tracker
+
+[`personal-finance-tracker/`](personal-finance-tracker/README.md) เป็นแอป Python (tkinter + SQLite) แยกจากไลบรารี C ใช้เก็บและเตรียมข้อมูลรายจ่ายสำหรับโมเดลในอนาคต ยังไม่เรียก CML CLI หรือแสดงผลทำนาย; รายละเอียดอยู่ใน [ML readiness](personal-finance-tracker/docs/ml-readiness.md).
+
 ## Features และ API
 
 - [Matrix](include/matrix.h): contiguous row-major storage, add/subtract/multiply/scale/transpose/dot product; operations คืน allocation ใหม่
@@ -88,3 +101,4 @@ Phase H handoff บันทึกผลที่รันจริง. Benchmar
 - [Agent workflow](docs/agent-workflow.md)
 - [Phase H handoff](docs/phase-h-handoff.md)
 - [Phase I handoff](docs/phase-i-handoff.md)
+- [ใช้ไฟล์ CSV ของคุณ](docs/using-your-csv.md)

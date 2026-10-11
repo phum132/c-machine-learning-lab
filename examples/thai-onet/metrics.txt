@@ -1,0 +1,5 @@
+Source: Bangkok O-NET M.3, academic year 2565 (school averages)
+Complete records: 101; train/test: 81/20
+MAE: 1.843585
+RMSE: 2.124994
+R2: 0.550341
