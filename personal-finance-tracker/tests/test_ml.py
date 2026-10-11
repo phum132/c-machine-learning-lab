@@ -1,4 +1,5 @@
 import math
+import os
 import unittest
 from datetime import date
 
@@ -12,6 +13,9 @@ from finance.validation import EXPENSE, INCOME
 try:
     CLI = find_cli()
 except FileNotFoundError:
+    # CI sets CML_REQUIRE_CLI so a missing build fails loudly instead of skipping.
+    if os.environ.get("CML_REQUIRE_CLI") == "1":
+        raise
     CLI = None
 
 
