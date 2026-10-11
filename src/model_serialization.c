@@ -2,9 +2,11 @@
 
 #include <errno.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -25,6 +27,29 @@ static int replace_file(const char *source, const char *destination)
 #else
     return rename(source, destination) == 0;
 #endif
+}
+
+/* ".<8 hex>-<2 digits>.tmp" is 16 bytes; leave room for the terminator. */
+#define TEMP_SUFFIX_MAX 32U
+#define TEMP_ATTEMPTS 64U
+
+/* Create a new temporary file next to `path`. Mode "x" (C11) refuses any
+ * existing entry, including a planted symlink, and the varying suffix keeps
+ * concurrent or crashed saves from colliding. Returns NULL on failure. */
+static FILE *open_temporary(const char *path, char *buffer, size_t buffer_size)
+{
+    static unsigned long counter = 0UL;
+    const unsigned long seed = (unsigned long)time(NULL) ^ ((unsigned long)clock() << 16U) ^
+                               (unsigned long)(uintptr_t)buffer;
+    for (unsigned attempt = 0U; attempt < TEMP_ATTEMPTS; ++attempt) {
+        FILE *file;
+        const unsigned long token = (seed + ++counter * 2654435761UL) & 0xffffffffUL;
+        if (snprintf(buffer, buffer_size, "%s.%08lx-%02u.tmp", path, token, attempt) < 0)
+            return NULL;
+        file = fopen(buffer, "wbx");
+        if (file != NULL) return file;
+    }
+    return NULL;
 }
 
 static MLStatus save_model(const char *path, const char *type, size_t count,
@@ -48,12 +73,10 @@ static MLStatus save_model(const char *path, const char *type, size_t count,
                        scaling->scales[i] <= 0.0)) return ML_STATUS_NUMERIC_ERROR;
     }
     path_length = strlen(path);
-    if (path_length > SIZE_MAX - 5U) return ML_STATUS_INVALID_ARGUMENT;
-    temporary_path = malloc(path_length + 5U);
+    if (path_length > SIZE_MAX - TEMP_SUFFIX_MAX) return ML_STATUS_INVALID_ARGUMENT;
+    temporary_path = malloc(path_length + TEMP_SUFFIX_MAX);
     if (temporary_path == NULL) return ML_STATUS_OUT_OF_MEMORY;
-    memcpy(temporary_path, path, path_length);
-    memcpy(temporary_path + path_length, ".tmp", 5U);
-    file = fopen(temporary_path, "wb");
+    file = open_temporary(path, temporary_path, path_length + TEMP_SUFFIX_MAX);
     if (file == NULL) { free(temporary_path); return ML_STATUS_IO_ERROR; }
     if (fprintf(file, "CMLMODEL %d\n%s\n%zu\n%a\n", scaled ? 2 : 1, type, count, bias) < 0)
         failed = 1;

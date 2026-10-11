@@ -127,10 +127,21 @@ int test_model_serialization(void)
     CHECK(loaded_linear == NULL);
 
     /* Version 2 round-trips scaling; version 1 loaders refuse it. */
+    /* A pre-existing "<path>.tmp" (stale or planted) is neither reused nor modified. */
+    file = fopen(linear_tmp_path, "wb");
+    CHECK(file != NULL);
+    CHECK(fputs("keep", file) >= 0);
+    CHECK(close_fixture(&file));
     CHECK(ml_feature_scaling_create(means, scales, 3U, &scaling) == ML_STATUS_OK);
     CHECK(ml_model_save_linear_scaled(linear_path, linear, &scaling) == ML_STATUS_OK);
     file = fopen(linear_tmp_path, "rb");
-    CHECK(file == NULL);
+    CHECK(file != NULL);
+    {
+        char kept[8] = {0};
+        CHECK(fgets(kept, (int)sizeof(kept), file) != NULL && strcmp(kept, "keep") == 0);
+    }
+    CHECK(close_fixture(&file));
+    CHECK(remove(linear_tmp_path) == 0);
     CHECK(ml_model_load_linear_scaled(linear_path, &loaded_linear, &loaded_scaling) == ML_STATUS_OK);
     CHECK(ml_linear_regression_bias(loaded_linear) == -0.75);
     CHECK(loaded_scaling.feature_count == 3U);

@@ -101,7 +101,7 @@ Phase H handoff บันทึกผลที่รันจริง. Benchmar
 ## Known limitations
 
 - Validation split เป็นการสุ่มแบบครั้งเดียว ไม่ stratify label และยังไม่มี k-fold
-- Model writer แทนที่ไฟล์ด้วย rename/MoveFileEx แต่ไม่ fsync จึงไม่รับประกันข้อมูลเมื่อไฟดับ; ใช้ `<path>.tmp` ชื่อตายตัว จึงไม่รองรับการเขียนไฟล์เดียวกันพร้อมกัน; serialization ต้องใช้ C numeric locale
+- Model writer แทนที่ไฟล์ด้วย rename/MoveFileEx แต่ไม่ fsync จึงไม่รับประกันข้อมูลเมื่อไฟดับ; ถ้าเซฟไฟล์เดียวกันพร้อมกัน ไฟล์ที่เขียนเสร็จทีหลังจะเป็นตัวที่เหลืออยู่; serialization ต้องใช้ C numeric locale
 - เดโมใน `examples/` และ `scripts/run_linear_csv.py` ยังปรับสเกลใน Python เอง ไม่ได้ใช้ `--normalize`
 - GCC MSYS2 ที่ใช้ในเครื่อง Windows นี้ไม่มี sanitizer runtime; ASan/UBSan ผ่านด้วย MSYS2 Clang แทน
 - CI run ที่ยืนยันล่าสุดเป็นผลของ commit `616b959`; รันใหม่เมื่อมี commit ถัดไป

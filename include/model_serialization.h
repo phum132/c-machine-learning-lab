@@ -14,7 +14,7 @@
  * and one `mean scale` pair per feature for input standardization.
  * Files must be interpreted in the C numeric locale.
  *
- * Saves write `<path>.tmp` and then replace `path`, so a failed save leaves
+ * Saves create a uniquely named `<path>.<random>.tmp` exclusively (C11 "wbx") and then replace `path`, so a failed save leaves
  * an existing destination untouched. Replacement uses rename (POSIX) or
  * MoveFileEx (Windows); file contents are not fsynced. Loads return an owned
  * model; `out` is cleared on entry and on every failure. */
