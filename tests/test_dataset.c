@@ -144,10 +144,33 @@ int test_dataset(void)
     if (write_fixture("1,2\n", sizeof("1,2\n") - 1U) == 0 ||
         ml_dataset_load_csv(DATASET_FIXTURE_PATH, NULL, &dataset) != ML_STATUS_INVALID_ARGUMENT ||
         dataset != NULL ||
+        ml_dataset_load_csv(DATASET_FIXTURE_PATH, &no_header, NULL) != ML_STATUS_INVALID_ARGUMENT ||
+        ml_dataset_load_csv(DATASET_FIXTURE_PATH, &(MLDatasetCsvOptions){2, 0U}, &dataset) !=
+            ML_STATUS_INVALID_ARGUMENT || dataset != NULL ||
+        ml_dataset_load_csv(DATASET_FIXTURE_PATH, &(MLDatasetCsvOptions){0, 2U}, &dataset) !=
+            ML_STATUS_PARSE_ERROR || dataset != NULL ||
         ml_dataset_load_csv("build/no-such-dataset.csv", &no_header, &dataset) != ML_STATUS_IO_ERROR ||
         dataset != NULL) {
         failed = 1;
         goto cleanup;
+    }
+
+    /* The target projection may select either endpoint; remaining features
+       retain original CSV order. */
+    {
+        const MLDatasetCsvOptions first_target = {0, 0U};
+        const char endpoint_csv[] = "10,20,30\n";
+        if (!write_fixture(endpoint_csv, sizeof(endpoint_csv) - 1U) ||
+            ml_dataset_load_csv(DATASET_FIXTURE_PATH, &first_target, &dataset) != ML_STATUS_OK ||
+            ml_dataset_feature_count(dataset) != 2U || ml_dataset_targets(dataset)[0] != 10.0 ||
+            matrix_const_data(ml_dataset_features(dataset))[0] != 20.0 ||
+            matrix_const_data(ml_dataset_features(dataset))[1] != 30.0) {
+            failed = 1;
+            goto cleanup;
+        }
+        ml_dataset_destroy(dataset);
+        dataset = NULL;
+        (void)remove(DATASET_FIXTURE_PATH);
     }
 
 cleanup:

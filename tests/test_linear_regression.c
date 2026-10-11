@@ -35,6 +35,37 @@ int test_linear_regression(void)
             matrix_const_data(first.train_features)[i] != matrix_const_data(second.train_features)[i]) goto fail;
     if (ml_linear_regression_mse(model, features, targets, 3U, &mse) != ML_STATUS_INVALID_ARGUMENT) goto fail;
 
+    /* One full-batch step has a hand-computable MSE gradient. */
+    {
+        const double step_targets[] = {3.0, 5.0};
+        const MLLinearRegressionConfig one_step = {1U, 1U, 0.1, 0.0};
+        MLLinearRegression *step_model = NULL;
+        MLTrainingHistory step_history = {0U, NULL};
+        MLMatrix *step_features = NULL;
+        if (matrix_create(2U, 1U, &step_features) != ML_STATUS_OK ||
+            ml_linear_regression_create(1U, &step_model) != ML_STATUS_OK) {
+            matrix_destroy(step_features);
+            ml_linear_regression_destroy(step_model);
+            goto fail;
+        }
+        matrix_data(step_features)[0] = 1.0;
+        matrix_data(step_features)[1] = 2.0;
+        if (ml_linear_regression_train(step_model, step_features, step_targets, 2U,
+                                       &one_step, &step_history) != ML_STATUS_OK ||
+            step_history.length != 2U ||
+            fabs(ml_linear_regression_weights(step_model)[0] - 1.3) > 1e-15 ||
+            fabs(ml_linear_regression_bias(step_model) - 0.8) > 1e-15 ||
+            fabs(step_history.mse_values[1] - 1.685) > 1e-14) {
+            ml_training_history_destroy(&step_history);
+            matrix_destroy(step_features);
+            ml_linear_regression_destroy(step_model);
+            goto fail;
+        }
+        ml_training_history_destroy(&step_history);
+        matrix_destroy(step_features);
+        ml_linear_regression_destroy(step_model);
+    }
+
     /* Invalid training parameters leave the model unchanged and clear history. */
     {
         const MLLinearRegressionConfig invalid = {0U, 1U, 0.01, 0.0};

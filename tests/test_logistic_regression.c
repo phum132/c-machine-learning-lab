@@ -50,6 +50,38 @@ int test_logistic_regression(void)
     matrix_destroy(classes);
     classes = NULL;
 
+    /* Check the sample-mean logistic gradient against one exact update. */
+    {
+        const double step_x[] = {-1.0, 1.0};
+        const double step_y[] = {0.0, 1.0};
+        const MLLogisticRegressionConfig one_step = {1U, 1U, 0.2, 0.0};
+        MLMatrix *step_features = NULL;
+        MLLogisticRegression *step_model = NULL;
+        MLLogisticHistory step_history = {0U, NULL};
+        if (matrix_create(2U, 1U, &step_features) != ML_STATUS_OK ||
+            ml_logistic_regression_create(1U, &step_model) != ML_STATUS_OK) {
+            matrix_destroy(step_features);
+            ml_logistic_regression_destroy(step_model);
+            goto cleanup;
+        }
+        matrix_data(step_features)[0] = step_x[0];
+        matrix_data(step_features)[1] = step_x[1];
+        if (ml_logistic_regression_train(step_model, step_features, step_y, 2U,
+                                         &one_step, &step_history) != ML_STATUS_OK ||
+            step_history.length != 2U ||
+            fabs(ml_logistic_regression_weights(step_model)[0] - 0.1) > 1e-15 ||
+            ml_logistic_regression_bias(step_model) != 0.0 ||
+            fabs(step_history.cross_entropy_values[1] - log1p(exp(-0.1))) > 1e-15) {
+            ml_logistic_history_destroy(&step_history);
+            matrix_destroy(step_features);
+            ml_logistic_regression_destroy(step_model);
+            goto cleanup;
+        }
+        ml_logistic_history_destroy(&step_history);
+        matrix_destroy(step_features);
+        ml_logistic_regression_destroy(step_model);
+    }
+
     if (ml_logistic_regression_train(model, features, labels, 4U, &config, &history) != ML_STATUS_OK ||
         history.length < 2U || history.cross_entropy_values[history.length - 1U] >=
         history.cross_entropy_values[0U] ||
@@ -63,6 +95,26 @@ int test_logistic_regression(void)
     matrix_destroy(classes);
     classes = NULL;
     ml_logistic_history_destroy(&history);
+
+    /* The logits BCE formula remains finite and correct at either extreme. */
+    {
+        MLMatrix *extreme_logits = NULL;
+        const double opposite_labels[] = {0.0, 1.0};
+        const double unit_weight[] = {1.0};
+        if (matrix_create(2U, 1U, &extreme_logits) != ML_STATUS_OK) {
+            goto cleanup;
+        }
+        matrix_data(extreme_logits)[0] = 1000.0;
+        matrix_data(extreme_logits)[1] = -1000.0;
+        if (ml_logistic_regression_set_parameters(model, unit_weight, 1U, 0.0) != ML_STATUS_OK ||
+            ml_logistic_regression_binary_cross_entropy(model, extreme_logits, opposite_labels,
+                                                        2U, &loss) != ML_STATUS_OK ||
+            loss != 1000.0) {
+            matrix_destroy(extreme_logits);
+            goto cleanup;
+        }
+        matrix_destroy(extreme_logits);
+    }
 
     if (ml_logistic_regression_predict_classes(model, features, 1.1, &classes) !=
         ML_STATUS_INVALID_ARGUMENT || classes != NULL ||

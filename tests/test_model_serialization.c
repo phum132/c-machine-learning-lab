@@ -32,6 +32,9 @@ int test_model_serialization(void)
 
     CHECK(ml_linear_regression_create(3U, &linear) == ML_STATUS_OK);
     CHECK(ml_linear_regression_set_parameters(linear, weights, 3U, -0.75) == ML_STATUS_OK);
+    CHECK(ml_model_save_linear(NULL, linear) == ML_STATUS_INVALID_ARGUMENT);
+    CHECK(ml_model_save_linear("", linear) == ML_STATUS_INVALID_ARGUMENT);
+    CHECK(ml_model_save_linear(linear_path, NULL) == ML_STATUS_INVALID_ARGUMENT);
     CHECK(ml_linear_regression_set_parameters(linear, invalid, 3U, 12.0) == ML_STATUS_NUMERIC_ERROR);
     CHECK(ml_linear_regression_bias(linear) == -0.75);
     CHECK(ml_linear_regression_weights(linear)[0] == weights[0]);
@@ -56,6 +59,22 @@ int test_model_serialization(void)
     file = fopen(bad_path, "wb");
     CHECK(file != NULL);
     CHECK(fputs("CMLMODEL 2\nlinear\n1\n0x0p+0\n0x1p+0\n", file) >= 0);
+    CHECK(close_fixture(&file));
+    CHECK(ml_model_load_linear(bad_path, &loaded_linear) == ML_STATUS_PARSE_ERROR);
+    CHECK(loaded_linear == NULL);
+    loaded_linear = linear; /* failed loads must clear an existing output value */
+    CHECK(ml_model_load_linear(NULL, &loaded_linear) == ML_STATUS_INVALID_ARGUMENT);
+    CHECK(loaded_linear == NULL);
+    CHECK(ml_model_load_linear(bad_path, NULL) == ML_STATUS_INVALID_ARGUMENT);
+    file = fopen(bad_path, "wb");
+    CHECK(file != NULL);
+    CHECK(fputs("CMLMODEL 1\nlinear\n1\n0x0p+0\nnot-a-hex-float\n", file) >= 0);
+    CHECK(close_fixture(&file));
+    CHECK(ml_model_load_linear(bad_path, &loaded_linear) == ML_STATUS_PARSE_ERROR);
+    CHECK(loaded_linear == NULL);
+    file = fopen(bad_path, "wb");
+    CHECK(file != NULL);
+    CHECK(fputs("CMLMODEL 1\nlinear\n1\n0x0p+0\n0x1p+0\nextra\n", file) >= 0);
     CHECK(close_fixture(&file));
     CHECK(ml_model_load_linear(bad_path, &loaded_linear) == ML_STATUS_PARSE_ERROR);
     CHECK(loaded_linear == NULL);

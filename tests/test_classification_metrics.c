@@ -25,6 +25,16 @@ int test_classification_metrics(void)
         metrics.accuracy != 1.0 || metrics.precision != 0.0 ||
         metrics.recall != 0.0 || metrics.f1 != 0.0) return 1;
 
+    /* Exercise precision's and recall's zero denominators independently. */
+    {
+        const double positives[] = {1.0, 1.0};
+        const double negatives[] = {0.0, 0.0};
+        if (ml_binary_classification_metrics(positives, negatives, 2U, &metrics) != ML_STATUS_OK ||
+            metrics.precision != 0.0 || metrics.recall != 0.0 || metrics.f1 != 0.0 ||
+            ml_binary_classification_metrics(negatives, positives, 2U, &metrics) != ML_STATUS_OK ||
+            metrics.precision != 0.0 || metrics.recall != 0.0 || metrics.f1 != 0.0) return 1;
+    }
+
     metrics.accuracy = -1.0;
     if (ml_binary_classification_metrics(all_negative, all_negative_predictions, 0U,
                                          &metrics) != ML_STATUS_INVALID_ARGUMENT ||
