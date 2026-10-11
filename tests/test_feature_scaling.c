@@ -47,7 +47,9 @@ int test_feature_scaling(void)
     CHECK(ml_feature_scaling_apply(&created, features) == ML_STATUS_OK);
     CHECK(matrix_const_data(features)[0] == -0.75 && matrix_const_data(features)[6] == 0.75);
 
-    /* Invalid statistics and dimension mismatches leave inputs untouched. */
+    /* Invalid statistics and dimension mismatches leave inputs untouched. The
+     * output must be destroyed before reuse, per the API contract. */
+    ml_feature_scaling_destroy(&created);
     CHECK(ml_feature_scaling_create(means, zero_scale, 2U, &created) == ML_STATUS_NUMERIC_ERROR);
     CHECK(created.feature_count == 0U && created.means == NULL);
     CHECK(ml_feature_scaling_create(non_finite, scales, 2U, &created) == ML_STATUS_NUMERIC_ERROR);

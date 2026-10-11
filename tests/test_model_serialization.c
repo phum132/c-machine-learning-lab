@@ -156,6 +156,8 @@ int test_model_serialization(void)
     CHECK(ml_model_load_logistic_scaled(logistic_path, &loaded_logistic_scaled, &loaded_scaling) == ML_STATUS_OK);
     CHECK(loaded_scaling.feature_count == 3U && loaded_scaling.scales[2] == scales[2]);
     ml_feature_scaling_destroy(&loaded_scaling);
+    ml_logistic_regression_destroy(loaded_logistic); /* still owned from the version 1 round-trip */
+    loaded_logistic = NULL;
     CHECK(ml_model_load_logistic(logistic_path, &loaded_logistic) == ML_STATUS_INVALID_ARGUMENT);
     CHECK(loaded_logistic == NULL);
     /* Scaled loaders accept version 1 and leave scaling empty. */
